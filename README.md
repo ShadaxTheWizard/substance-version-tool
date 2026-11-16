@@ -177,7 +177,7 @@ headless as a self-test and kept on the run's page (*Artifacts*).
 To publish a release, bump `__version__` in `spp_convert.py`, commit, then tag and push:
 
 ```sh
-git tag -a v0.2.0 -m "Substance Version Tool 0.2.0" && git push origin main v0.2.0
+git tag -a vX.Y.Z -m "Substance Version Tool X.Y.Z" && git push origin main vX.Y.Z
 ```
 
 The tag build creates the GitHub release with every build and its `.sha256` attached, using
