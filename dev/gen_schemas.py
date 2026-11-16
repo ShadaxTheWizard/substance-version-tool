@@ -29,9 +29,34 @@ import sppformat as sf                 # noqa: E402
 import spp_convert as sc               # noqa: E402
 import schemas as old                  # noqa: E402
 
-AUX_KINDS = ('baking.ini', 'viewersettings2.ini', 'iraysettings2.ini', 'posteffects.ini')
+AUX_KINDS = ('baking.ini', 'viewersettings2.ini', 'iraysettings2.ini', 'posteffects.ini',
+             # names before 11.0, and the blobs that only need re-encoding for 10.x and older
+             'viewersettings.ini', 'iraysettings.ini', 'camera.ini', 'colorprofile.ini',
+             'layersstackstate.bin', 'layersstackstate2.bin')
 DOCS = ('paint/document.bin', 'paint/default_material.bin')
 BASE = old.DOC_BASE_VERSION
+
+# Changes in older releases that probing 12.0.1 cannot see (it only finds added fields).
+# Each is checked against the real projects given, when one of that age is among them.
+#
+# Before data version 82, DataBrushStamp was called DataBrush: a 9.1.2 project, and the
+# 10.0 / 11.0 field lists of Universal SPP (github.com/Yeusepe/Universal-Painter-Files).
+OLD_NAMES = {'DataBrushStamp': ('DataBrush', 82)}
+# Fields removed by the step to data version 81 (the one that added changeFlags): on the
+# paint layers of a 9.1.2 project, and on the paint and eraser layers of Universal SPP's
+# 9.0 list, absent from its 10.0 list.  Projection-paint, smudge and clone layers are
+# assumed to have had them too (no project showed one): the five stroke layers share
+# every other field and changed together at every other step (strokes3D, changeFlags).
+REMOVED = {81: {'projDuplicates': 10, 'stencilPostBlending': 10}}
+REMOVED_FROM = ('DataActionClone', 'DataActionEraser', 'DataActionPaint', 'DataActionPaintProj',
+                'DataActionSmudge')
+REMOVED_SEEN = ('DataActionEraser', 'DataActionPaint')
+CURRENT_NAMES = {old_name: cur for cur, (old_name, _) in OLD_NAMES.items()}
+
+
+def removed_fields():
+    """{"Class.field": (type, version that removed it)}"""
+    return {f'{c}.{fn}': (t, v) for v, fs in REMOVED.items() for c in REMOVED_FROM for fn, t in fs.items()}
 
 
 def visit(root, cb):
@@ -67,6 +92,8 @@ def main():
     aux = collections.defaultdict(lambda: collections.defaultdict(dict))
     usual = collections.defaultdict(collections.Counter)
     auxvals = collections.defaultdict(collections.Counter)
+    removed = removed_fields()
+    removed_usual = collections.defaultdict(collections.Counter)
     for p in sorted(files):
         with h5py.File(p, 'r') as f:
             def scan(name, obj):
@@ -79,21 +106,23 @@ def main():
                     return
                 hdr, root = sf.parse(bytes(obj[()]))
                 ver = hdr[1]
-                saved = None
-                if 'projectsettings.ini' in f:
-                    saved = sc.saved_with(sf.QStream(bytes(f['projectsettings.ini'][()])).variant_map())
 
                 def cb(k, items):
                     table = doc[ver] if isdoc else aux[base][ver]
+                    cname = k.name
+                    if isdoc and cname in CURRENT_NAMES and ver < OLD_NAMES[CURRENT_NAMES[cname]][1]:
+                        cname = CURRENT_NAMES[cname]          # recorded under today's name
                     lay = [tuple(x) for x in k.fields]
-                    if table.setdefault(k.name, lay) != lay:
-                        sys.exit(f'{p}: {name}: two layouts for {k.name} in version {ver}')
+                    if table.setdefault(cname, lay) != lay:
+                        sys.exit(f'{p}: {name}: two layouts for {cname} in version {ver}')
                     for it in items:
                         for fn, ft in k.fields:
-                            key = f'{k.name}.{fn}'
+                            key = f'{cname}.{fn}'
                             if isdoc:
                                 if ver == BASE:
                                     usual[key][sc.fingerprint(it[fn])] += 1
+                                if key in removed and ver < removed[key][1]:
+                                    removed_usual[key][bytes(it[fn])] += 1
                             elif ft in sf.FIXED or ft == sf.STRING:
                                 auxvals[(base, ver, key)][bytes(it[fn])] += 1
                 visit(root, cb)
@@ -103,9 +132,9 @@ def main():
     for c, lay in doc[BASE].items():
         if doc_base.setdefault(c, lay) != lay:
             sys.exit(f'{c}: layout in the projects differs from schemas.DOC_89')
-    # A class seen only in older projects is taken as unchanged up to BASE, unless a newer
-    # project shows it with another layout: then BASE's layout is unknown, and the older
-    # layout is kept for its own data version only (DOC_OLDER_SEEN).
+    # A class seen only in older projects is taken as unchanged up to BASE when a newer
+    # project shows it with the same layout.  Otherwise BASE's layout is unknown, and the
+    # older layout is kept for its own data version only (DOC_OLDER_SEEN).
     later = collections.defaultdict(set)
     for n, table in list(doc.items()) + list(getattr(old, 'DOC_NEWER', {}).items()):
         if n > BASE:
@@ -118,7 +147,7 @@ def main():
             for c, lay in doc[n].items():
                 if c in doc_base:
                     continue
-                if later[c] and later[c] != {tuple(lay)}:
+                if later[c] != {tuple(lay)}:
                     if older_seen.setdefault(n, {}).setdefault(c, lay) != lay:
                         sys.exit(f'version {n}: layout of {c} differs from the one in schemas.py')
                     continue
@@ -136,7 +165,16 @@ def main():
                 print(f'  {c}.{fn}: taken as added in {added[c + "." + fn]} (like {fam[0]})')
 
     def layouts(n):
-        return {c: [(a, t) for a, t in lay if added.get(f'{c}.{a}', 0) <= n] for c, lay in doc_base.items()}
+        out = {}
+        for c, lay in doc_base.items():
+            fields = [(a, t) for a, t in lay if added.get(f'{c}.{a}', 0) <= n]
+            fields += [(k.split('.')[1], t) for k, (t, v) in removed.items() if k.startswith(c + '.') and n < v]
+            out[c] = sorted(fields)
+        return out
+    for key in removed:
+        c = key.split('.')[0]
+        seen = [n for n in doc if n < removed[key][1] and c in doc[n]]
+        print(f'  {key}: removed in {removed[key][1]}, seen in older projects of version {seen or "none"}')
     for n in sorted(doc):
         if oracle['lo'] <= n < BASE:
             bad = [c for c, lay in doc[n].items() if layouts(n).get(c, older_seen.get(n, {}).get(c)) != lay
@@ -165,14 +203,29 @@ def main():
     for (base, ver, key), cnt in auxvals.items():
         auxd.setdefault(base, {}).setdefault(ver, {}).setdefault(key, cnt.most_common(1)[0][0])
     auxd = {k: {v: dict(sorted(d.items())) for v, d in sorted(vs.items())} for k, vs in sorted(auxd.items())}
+    old_removed = getattr(old, 'DOC_REMOVED', {})
+    doc_removed = {}
+    for key, (t, v) in sorted(removed.items()):
+        if removed_usual.get(key):
+            val = removed_usual[key].most_common(1)[0][0]
+        elif key in old_removed:
+            val = old_removed[key][2]
+        else:                              # same field on a sibling layer, else zero
+            sib = [removed_usual[k] for k in removed_usual if k.split('.')[1] == key.split('.')[1]]
+            val = sib[0].most_common(1)[0][0] if sib else bytes(sf.FIXED[t])
+        doc_removed[key] = (t, v, val)
 
     with open(os.path.join(REPO, 'schemas.py'), 'w') as out:
         out.write(HEADER % oracle['lo'])
         for name, val in (('DOC_89', dict(sorted(doc_base.items()))), ('DOC_ADDED', dict(sorted(added.items()))),
+                          ('DOC_REMOVED', doc_removed),
+                          ('DOC_REMOVED_ASSUMED', sorted(set(REMOVED_FROM) - set(REMOVED_SEEN))),
+                          ('DOC_OLD_NAMES', OLD_NAMES),
                           ('DOC_USUAL', doc_usual), ('DOC_OLDER_SEEN', dict(sorted(older_seen.items()))),
                           ('DOC_NEWER', newer), ('DOC_NEWER_ASSUMED', newer_assumed),
                           ('AUX', aux_out), ('AUX_DEFAULTS', auxd)):
             out.write(f'{name} = ' + pprint.pformat(val, width=110, compact=True, sort_dicts=False) + '\n\n')
+        out.write(FOOTER.lstrip('\n'))
     print('schemas.py written')
 
 
@@ -237,9 +290,14 @@ DOC_89       layouts of paint/document.bin in data version 89 (Painter 12.0): th
              truth, read from the projects and templates shipped with 12.0.1.
 DOC_ADDED    fields of DOC_89 that older data versions do not have, with the data version
              that introduced each.  Everything else is unchanged back to DOC_MIN_VERSION.
+DOC_REMOVED  fields older data versions have and DOC_89 does not: (type, the data version
+             that removed it, the value it usually held).  Probing cannot find these;
+             they come from real older projects (see OLD_NAMES / REMOVED in gen_schemas).
+DOC_REMOVED_ASSUMED  classes given DOC_REMOVED fields by family, with no project to show it.
+DOC_OLD_NAMES  {class: (its name before, the data version that renamed it)}.
 DOC_USUAL    the value those fields usually hold (not worth a warning when dropped).
 DOC_OLDER_SEEN  classes missing from DOC_89 whose layout is known for one older data
-             version only (a newer version shows them changed, so 89's layout is unknown).
+             version only (no newer project shows the same layout, so 89's is unknown).
 DOC_NEWER    complete layout tables of data versions after 89 that a target release
              writes (91: Painter 12.1), read from projects saved by that release.
 DOC_NEWER_ASSUMED  classes of DOC_NEWER that no such project contained: DOC_89's layout
@@ -260,12 +318,35 @@ def doc_layouts(version):
         return DOC_NEWER[version]
     if not DOC_MIN_VERSION <= version <= DOC_BASE_VERSION:
         raise ValueError(f'no document layouts for data version {version}')
-    out = {c: [(f, t) for f, t in fields if DOC_ADDED.get(f'{c}.{f}', 0) <= version]
-           for c, fields in DOC_89.items()}
+    out = {}
+    for c, fields in DOC_89.items():
+        lay = [(f, t) for f, t in fields if DOC_ADDED.get(f'{c}.{f}', 0) <= version]
+        lay += [(k.split('.')[1], t) for k, (t, v, _) in DOC_REMOVED.items()
+                if k.startswith(c + '.') and version < v]
+        out[c] = sorted(lay)
     out.update(DOC_OLDER_SEEN.get(version, {}))
     return out
 
 
+def doc_names(version):
+    """{class: the name it is written under in a data version}, for the renamed ones."""
+    return {c: old for c, (old, v) in DOC_OLD_NAMES.items() if version < v}
+
+
+def current_name(name):
+    """Today's name of a class read from a project of any age."""
+    return CURRENT_NAMES.get(name, name)
+
+
+def doc_defaults(version):
+    """{"Class.field": raw value} for the removed fields a data version still has."""
+    return {k: val for k, (t, v, val) in DOC_REMOVED.items() if version < v}
+
+
+'''
+
+FOOTER = '''
+CURRENT_NAMES = {old: c for c, (old, _) in DOC_OLD_NAMES.items()}
 '''
 
 if __name__ == '__main__':

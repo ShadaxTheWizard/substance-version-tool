@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sppformat as sf                                   # noqa: E402
 import schemas                                           # noqa: E402
 
-__version__ = '0.4.0'
+__version__ = '0.5.0'
 
 # ---------------------------------------------------------------------------
 # Painter releases and what each one reads
@@ -49,16 +49,32 @@ OLDEST_DATA_VERSION = schemas.DOC_MIN_VERSION  # oldest layout this tool can wri
 class Profile:
     """The file-format versions written for a target release."""
 
-    def __init__(self, doc, aux, anorigami, cache):
+    def __init__(self, doc, aux, anorigami, cache, encoding=sf.REGISTRY):
         self.doc = doc                # data version of paint/document.bin
         self.aux = aux                # {dataset basename: data version} of the settings blobs
         self.anorigami = anorigami    # version of the auto-UV settings block (None = empty)
         self.cache = cache            # texture-cache header version (None = drop the cache)
+        self.encoding = encoding      # sf.REGISTRY (11.0 and later) or sf.INLINE (10.x and older)
 
 
-# Releases whose formats were read from real projects saved by that release.
+# Settings blobs of 10.x and older: their names before 11.0 and their data versions, the
+# same in 9.0 - 10.1.  Every one is rewritten in the inline encoding.
+OLD_AUX = {'baking.ini': 20, 'viewersettings.ini': 26, 'iraysettings.ini': 1, 'posteffects.ini': 7,
+           'camera.ini': 2, 'colorprofile.ini': 0, 'layersstackstate.bin': 2}
+# Settings blobs renamed in 11.0: {today's name: the name before}.
+OLD_AUX_NAMES = {'viewersettings2.ini': 'viewersettings.ini', 'iraysettings2.ini': 'iraysettings.ini',
+                 'layersstackstate2.bin': 'layersstackstate.bin'}
+
+# Every release's format, read from projects saved by it: 9.1, 10.1, 11.0, 11.1, 12.0,
+# 12.1, 12.2 here; 9.0 and 10.0 from Universal SPP's profiles, which were made from real
+# 9.0 / 10.0 projects (github.com/Yeusepe/Universal-Painter-Files).  10.1 is written in the
+# inline encoding of 10.0: the only 10.1 project at hand is a test file with a header no
+# normal save has, and 10.1 reads 10.0 projects.
 PROFILES = {
-    (10, 1): Profile(81, {'baking.ini': 20}, None, (3, 2)),
+    (9, 0): Profile(78, OLD_AUX, None, None, sf.INLINE),
+    (9, 1): Profile(80, OLD_AUX, None, None, sf.INLINE),
+    (10, 0): Profile(81, OLD_AUX, None, None, sf.INLINE),
+    (10, 1): Profile(81, OLD_AUX, None, (3, 2), sf.INLINE),
     (11, 0): Profile(82, {'baking.ini': 21, 'viewersettings2.ini': 27, 'iraysettings2.ini': 1,
                           'posteffects.ini': 7}, 6, (3, 2)),
     (11, 1): Profile(88, {'baking.ini': 23, 'viewersettings2.ini': 29, 'iraysettings2.ini': 2,
@@ -70,11 +86,6 @@ PROFILES = {
     (12, 2): Profile(92, {'baking.ini': 26, 'viewersettings2.ini': 31, 'iraysettings2.ini': 2,
                           'posteffects.ini': 9}, 8, (3, 3)),
 }
-# Releases older than the oldest one above (9.0, 9.1, 10.0).  No project saved by them
-# was available, so their exact data versions are unknown.  Data version 77 is the one
-# that introduced 3D path strokes, the headline feature of Painter 9.0, so 9.0 and later
-# read it (and upgrade it themselves).
-LEGACY_PROFILE = Profile(77, {}, None, None)
 
 
 class ConversionError(Exception):
@@ -101,7 +112,7 @@ class Target:
             if rel in PROFILES:
                 self.basis = rel
                 break
-        self.profile = PROFILES[self.basis] if self.basis else LEGACY_PROFILE
+        self.profile = PROFILES[self.basis]
         self.exact = self.basis == self.release
         self.forced = data_version is not None and data_version != self.profile.doc
         if self.forced:
@@ -110,8 +121,10 @@ class Target:
                                       f'and {schemas.DOC_BASE_VERSION}')
             p = self.profile
             cache = p.cache if data_version >= p.doc else (3, 2) if data_version >= 81 else None
-            self.profile = Profile(data_version, {}, p.anorigami if data_version >= p.doc else None,
-                                   cache)
+            # 10.x and older read nothing but the inline encoding, settings included.
+            aux = p.aux if p.encoding == sf.INLINE else {}
+            self.profile = Profile(data_version, aux, p.anorigami if data_version >= p.doc else None,
+                                   cache, p.encoding)
 
     def note(self):
         """One line on how sure the output format is, or None when it is the release's own."""
@@ -119,13 +132,8 @@ class Target:
             return f'written as data version {self.profile.doc}, as requested'
         if self.exact:
             return None
-        if self.basis:
-            return (f'written in the Painter {self.basis[0]}.{self.basis[1]} format, which '
-                    f'{self.name} opens; settings newer than {self.basis[0]}.{self.basis[1]} are dropped')
-        return (f'written as data version {self.profile.doc} (the one that introduced Painter 9.0\'s '
-                f'paths). No project saved by Painter {self.name} was available to confirm its '
-                f'exact format: if it reports "created with a newer version", retry with '
-                f'--data-version {OLDEST_DATA_VERSION}')
+        return (f'written in the Painter {self.basis[0]}.{self.basis[1]} format, which '
+                f'{self.name} opens; settings newer than {self.basis[0]}.{self.basis[1]} are dropped')
 
 
 def default_target(data_version=None):
@@ -261,17 +269,32 @@ class DataConverter:
     strict    unknown classes raise Unconvertible instead of being kept as they are
     defaults  {"Class.field": raw value} for target fields the source does not have
     usual     {"Class.field": fingerprint} values that are not worth reporting when dropped
+    names     {class: the name the target writes it under}, for classes renamed since
+
+    Classes are looked up under today's name (schemas.current_name), so a project of any
+    age can be the source.
     """
 
-    def __init__(self, report, layouts, strict=False, defaults=None, usual=None, quiet=False):
+    def __init__(self, report, layouts, strict=False, defaults=None, usual=None, quiet=False,
+                 names=None):
         self.report = report
         self.layouts = layouts
+        self.names = names or {}
         self.strict = strict
         self.defaults = defaults or {}
         self.usual = usual or {}
         self.quiet = quiet
         self.klasses = {}
         self.decal_color = None
+        self.skipped = Counter()            # strict mode: list entries of unknown classes
+
+    def _keep(self, o):
+        """In strict mode a list entry of a class the target does not have is left out
+        (a newer tweak or baker in a settings list) instead of failing the whole blob."""
+        if not self.strict or o is None or schemas.current_name(o.klass.name) in self.layouts:
+            return True
+        self.skipped[o.klass.name] += 1
+        return False
 
     def klass(self, name, fields):
         k = self.klasses.get(name)
@@ -285,7 +308,7 @@ class DataConverter:
             if t_src in (sf.OBJECT, sf.EMBED):
                 return self.obj(v)
             if t_src == sf.OBJLIST:
-                return [self.obj(x) for x in v]
+                return [self.obj(x) for x in v if self._keep(x)]
             if t_src == sf.ARRAY:
                 return self.arr(v)
             return v
@@ -300,7 +323,7 @@ class DataConverter:
                                       f'Painter {self.report.target.name}')
             return (1 << idx).to_bytes(8, 'little')
         if t_src == sf.OBJECT and t_dst == sf.OBJLIST:  # single object -> list
-            return [] if v is None else [self.obj(v)]
+            return [] if v is None or not self._keep(v) else [self.obj(v)]
         if t_src == sf.OBJLIST and t_dst == sf.OBJECT:
             return self.obj(v[0]) if v else None
         if self.strict:
@@ -330,7 +353,7 @@ class DataConverter:
         return sf.Obj(k, vals)
 
     def fields(self, klass, values):
-        name = klass.name
+        name = schemas.current_name(klass.name)
         src_types = dict(klass.fields)
         dst_fields = self.layouts.get(name)
         if dst_fields is None:
@@ -370,9 +393,19 @@ class DataConverter:
                 if key in self.usual and fingerprint(v) == self.usual[key]:
                     continue
                 self.report.dropped[key] += 1
-        return self.klass(name, dst_fields), out
+        return self.klass(self.names.get(name, name), dst_fields), out
 
     # -- special cases ------------------------------------------------------
+    def _rule_BakingMaterials_materialTemplate(self, values, consumed):
+        """A bake template (12.2) where the target has no template class: null, as
+        every older project at hand has it."""
+        v = values.get('materialTemplate')
+        if v is not None and schemas.current_name(v.klass.name) not in self.layouts:
+            consumed.add('materialTemplate')
+            self.skipped[v.klass.name] += 1
+            return None
+        return NotImplemented
+
     def _rule_DataChannel_userIsColorManaged(self, values, consumed):
         if 'userIsColor' in values:
             consumed.add('userIsColor')
@@ -437,30 +470,40 @@ class DataConverter:
     _rule_DataDecalHitRect_projViewInvMatrix = _hit_matrix
 
 
-def _check_layouts(blob, layouts, version, label):
-    """Re-parse a written blob and make sure every class uses the target layout."""
+def _check_layouts(blob, layouts, version, label, encoding, names=None):
+    """Re-parse a written blob and make sure every class uses the target layout, name
+    and encoding."""
     hdr, root = sf.parse(blob)
+    names = names or {}
     bad = set()
 
     def check(k):
-        want = layouts.get(k.name)
+        name = schemas.current_name(k.name)
+        want = layouts.get(name)
         if want is not None and [tuple(f) for f in k.fields] != [tuple(f) for f in want]:
             bad.add(k.name)
+        if k.name != names.get(name, name):
+            bad.add(k.name)
     sf.walk_classes(root, check)
-    if bad or hdr[1] != version:
+    if bad or hdr[1] != version or sf.encoding(blob) != encoding:
         raise ConversionError(f'{label}: self-check failed for {sorted(bad)}')
 
 
 def convert_document(blob, report, label):
-    """Layer-stack document -> target layout, or None when it is old enough already."""
+    """Layer-stack document -> target layout and encoding, or None when the target reads
+    it as it is."""
     hdr, root = sf.parse(blob)
-    version = report.target.profile.doc
-    if hdr[1] <= version:
+    p = report.target.profile
+    if hdr[1] <= p.doc and sf.encoding(blob) == p.encoding:
         return None
-    layouts = schemas.doc_layouts(version)
-    conv = DataConverter(report, layouts, usual=schemas.DOC_USUAL)
-    out = sf.write([hdr[0], version, hdr[2], 0], conv.obj(root))
-    _check_layouts(out, layouts, version, label)
+    if hdr[1] <= p.doc:                    # old enough, only in the wrong encoding
+        return sf.write([p.encoding, hdr[1], hdr[2], 0], root)
+    layouts = schemas.doc_layouts(p.doc)
+    names = schemas.doc_names(p.doc)
+    conv = DataConverter(report, layouts, usual=schemas.DOC_USUAL, names=names,
+                         defaults=schemas.doc_defaults(p.doc))
+    out = sf.write([p.encoding, p.doc, hdr[2], 0], conv.obj(root))
+    _check_layouts(out, layouts, p.doc, label, p.encoding, names)
     return out
 
 
@@ -469,31 +512,56 @@ AUX_NAMES = {'baking.ini': 'baking settings', 'viewersettings2.ini': 'viewer and
 
 
 def convert_aux(blob, kind, report):
-    """Settings blob -> target layout.  Returns None when nothing has to change or when
-    it cannot be expressed in the target layout (Painter then falls back to its defaults)."""
-    version = report.target.profile.aux.get(kind)
+    """Settings blob -> (dataset basename, bytes) in the target's layout and encoding.
+
+    Returns None to leave the blob as saved: nothing has to change, or it cannot be
+    expressed in the target layout (Painter then falls back to its defaults).  For a
+    target that reads only the inline encoding (10.x and older) a blob left as saved
+    could not even be decoded, so False is returned instead: leave it out."""
+    p = report.target.profile
+    inline = p.encoding == sf.INLINE
+    tkind = OLD_AUX_NAMES.get(kind, kind) if inline else kind
+    version = p.aux.get(tkind)
     have = sf.data_version(blob)
-    if version is None:
+    label = AUX_NAMES.get(kind, kind)
+    if version is None or have is None:
+        if inline:
+            report.info.append(f'{label} left out: Painter {report.target.name} has no such '
+                               f'settings')
+            return False
         if kind in AUX_NAMES:
             report.aux_left = True
         return None
-    if have is None or have <= version:
+    convert = have > version or (inline and have == version)
+    if not convert and not inline:
         return None
-    layouts = schemas.AUX.get(kind, {}).get(version)
     try:
-        if layouts is None:
-            raise Unconvertible('no layout table')
         hdr, root = sf.parse(blob)
-        conv = DataConverter(report, layouts, strict=True, quiet=True,
-                             defaults=schemas.AUX_DEFAULTS.get(kind, {}).get(version))
-        out = sf.write([hdr[0], version, hdr[2], 0], conv.obj(root))
-        _check_layouts(out, layouts, version, kind)
+        layouts, skipped = None, 0
+        if convert:
+            layouts = schemas.AUX.get(tkind, {}).get(version)
+            if layouts is None:
+                raise Unconvertible('no layout table')
+            conv = DataConverter(report, layouts, strict=True, quiet=True,
+                                 defaults=schemas.AUX_DEFAULTS.get(tkind, {}).get(version))
+            root = conv.obj(root)
+            skipped = sum(conv.skipped.values())
+        else:
+            version = have                 # older than the target's: only re-encoded
+        out = sf.write([p.encoding, version, hdr[2], 0], root)
+        if layouts is not None:
+            _check_layouts(out, layouts, version, kind, p.encoding)
     except (Unconvertible, sf.FormatError) as e:
-        report.info.append(f'{AUX_NAMES.get(kind, kind)} could not be converted ({e}); '
+        if inline:
+            report.info.append(f'{label} could not be converted ({e}); left out, so Painter '
+                               f'{report.target.name} will use its defaults')
+            return False
+        report.info.append(f'{label} could not be converted ({e}); '
                            f'Painter {report.target.name} will use its defaults')
         return None
-    report.info.append(f'{AUX_NAMES.get(kind, kind)} converted')
-    return out
+    if have > version or kind in AUX_NAMES:
+        report.info.append(f'{label} converted' + (f' ({skipped} newer entr{"y" if skipped == 1 else "ies"} left out)' if skipped else ''))
+    return tkind, out
 
 
 # ---------------------------------------------------------------------------
@@ -729,15 +797,30 @@ def convert(src, dst, target=None, drop_cache=False, force=False):
                 return
             base = name.rpartition('/')[2]
             if name.startswith(('editor/', 'baking/')):
-                out = convert_aux(bytes(obj[()]), base, report)
+                res = convert_aux(bytes(obj[()]), base, report)
+                if res is False:
+                    removed.add(name)
+                elif res is not None:
+                    kind, replaced[name] = res
+                    if kind != base:
+                        renamed[name] = f'{name.rpartition("/")[0]}/{kind}'
             elif name.startswith('paint/') and sf.data_version(bytes(obj[:20])) >= 60:
                 # Layer-stack documents share the project data version.
                 out = convert_document(bytes(obj[()]), report, name)
-            else:
-                return
-            if out is not None:
-                replaced[name] = out
+                if out is not None:
+                    replaced[name] = out
+            elif name.startswith('resources/') and target.profile.encoding == sf.INLINE:
+                old_resources.append(name)
+        old_resources = []
         f.visititems(scan)
+        # A blob renamed to its pre-11.0 name replaces one still saved under that name.
+        for src_name, dest in renamed.items():
+            if dest in f and dest not in renamed:
+                removed.add(dest)
+                replaced.pop(dest, None)
+        if old_resources:
+            report.warn(f'{len(old_resources)} resource(s) (such as export presets) are left in '
+                        f'the newer format; Painter {target.name} may not load them.')
         if report.aux_left:
             report.info.append(f'viewer and baking settings are left as saved; Painter {target.name} '
                                f'falls back to its defaults for the ones it cannot read')
@@ -763,7 +846,7 @@ def convert(src, dst, target=None, drop_cache=False, force=False):
                     if name in removed:
                         return
                     if name in replaced:
-                        _put(g, name, replaced[name])
+                        _put(g, renamed.get(name, name), replaced[name])
                         return
                     dest = renamed.get(name, name)
                     parent, _, leaf = dest.rpartition('/')
@@ -787,15 +870,24 @@ def convert(src, dst, target=None, drop_cache=False, force=False):
                 sf.parse(b)
                 if sf.data_version(b) > target.profile.doc:
                     raise ConversionError(f'{name} still has a newer data version')
-        bad = []
+        written = {renamed.get(n, n) for n in replaced}
+        bad, wrong_encoding = [], []
 
         def verify(name, obj):
-            if isinstance(obj, h5py.Dataset) and 'm3_x64_128' in obj.attrs and name in replaced:
+            if not isinstance(obj, h5py.Dataset):
+                return
+            if 'm3_x64_128' in obj.attrs and name in written:
                 if list(obj.attrs['m3_x64_128']) != list(sf.content_hash(bytes(obj[()]))):
                     bad.append(name)
+            if (target.profile.encoding == sf.INLINE and name.startswith(('editor/', 'baking/', 'paint/'))
+                    and obj.dtype == np.uint8 and obj.ndim == 1 and obj.shape[0] >= 12
+                    and bytes(obj[:4]) == sf.MAGIC and sf.encoding(bytes(obj[:12])) != sf.INLINE):
+                wrong_encoding.append(name)
         g.visititems(verify)
         if bad:
             raise ConversionError(f'checksum verification failed for {bad}')
+        if wrong_encoding:
+            raise ConversionError(f'still in the newer encoding: {wrong_encoding}')
     return report
 
 

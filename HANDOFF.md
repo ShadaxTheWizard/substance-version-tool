@@ -10,7 +10,7 @@ Shadax. Not affiliated with Adobe.
 
 | item | state |
 |---|---|
-| Latest release | **v0.4.0** (Windows installer + portable zip, Linux AppImage): 12.1 and 11.1 written in their own formats. 0.3.1 only existed to exercise the updater |
+| Latest release | **v0.5.0** (Windows installer + portable zip, Linux AppImage): every target written in its own format, 9.x / 10.x in their inline encoding (0.4.0 did 12.1 and 11.1). 0.3.1 only existed to exercise the updater |
 | Windows app | 0.2.0 confirmed working on a real Windows PC (window, conversion). 0.3.0 installed there |
 | Auto-update | tested on Linux against real releases. **Windows silent update 0.3.0 → 0.3.1 not yet confirmed**: next thing to check |
 | Code signing | SignPath Foundation application submitted by the maintainer on 2026-11-16 (answers in "SignPath application" below); **awaiting their decision** (manual review, can take one to two weeks, can be refused). Everything on the repo side is in place but switched off |
@@ -196,7 +196,7 @@ valid signature with the same signer subject. Tested on Linux against real relea
 | → 12.1 | written as 12.1's own format (data version 91). Every class and settings layout in converted 12.2 projects matches real 12.1.0 / 12.1.2 / 12.1.5 saves (8 projects in `~/Documents/Development/spp-samples/`, not in the repo). **Never opened in an actual 12.1** |
 | → 11.1 | written as 11.1's own format (data version 88); the probe-derived layouts match a real 11.1.1 save exactly (46 classes). **Never opened in an actual 11.1** |
 | → 11.0 / 10.1 | layouts match real 11.0 / 10.1 projects exactly; outputs open in Painter 12.0.1 as "version 82 / 81" projects. **Never opened in an actual 11.x / 10.1** |
-| → 9.0 / 9.1 / 10.0 | written as data version 77, an estimate (see below). Outputs open in Painter 12.0.1. **Very likely refused by an actual 9.x / 10.x: wrong binary encoding** (see "9.x / 10.x encoding" below) |
+| → 9.0 / 9.1 / 10.0 / 10.1 | written in each release's own format (78 / 80 / 81 / 81) and in the **inline encoding** of 10.x and older (see "9.x / 10.x encoding"). A converted 9.1 copy has exactly the datasets, versions and class layouts of a real 9.1.2 save; 9.0 / 10.0 documents match Universal SPP's real-project field lists. **Never opened in an actual 9.x / 10.x** |
 | Install (`install.sh`) | run on the dev machine; `substance-version-tool` (+ `spp-convert`, `spp-downgrade` aliases), launcher, menu entry, MIME all active |
 | `.spp` association | resolves correctly via GIO and KDE (Dolphin). `xdg-mime query filetype` still says `application/x-hdf5`, because on niri it falls back to libmagic. That is harmless. |
 
@@ -209,10 +209,10 @@ valid signature with the same signer subject. Tested on Linux against real relea
 | 12.0.x | 89 | 23 | 29 | 2 | 9 | samples shipped with 12.0.1 |
 | 11.1.x | 88 | 23 | 29 | 2 | 8 | an 11.1.1 project (autosaves by 11.1.2) |
 | 11.0.0 | 82 | 21 | 27 | 1 | 7 | `automated_tests/resources/*.spp` in the 12.0.1 install |
-| 10.1.0 | 81 | 20 | 26 (`viewersettings.ini`) | 1 (`iraysettings.ini`) | ? | `automated_tests/resources/future_binary_data.spp` |
-| 10.0 | 81 | 20 | 26 (`viewersettings.ini`) | 1 (`iraysettings.ini`) | 7 | Universal SPP's profiles (see below); written as 77 |
-| 9.1.2 | 80 | 20 | 26 (`viewersettings.ini`) | 1 (`iraysettings.ini`) | 7 | a 9.1.2 project; written as 77 |
-| 9.0 | 78 | 20 | 26 | 1 | 7 | Universal SPP's profiles; written as 77 |
+| 10.1.0 | 81 | 20 | 26 (`viewersettings.ini`) | 1 (`iraysettings.ini`) | 7 | `automated_tests/resources/future_binary_data.spp` |
+| 10.0 | 81 | 20 | 26 (`viewersettings.ini`) | 1 (`iraysettings.ini`) | 7 | Universal SPP's profiles (see below) |
+| 9.1.2 | 80 | 20 | 26 (`viewersettings.ini`) | 1 (`iraysettings.ini`) | 7 | a 9.1.2 project |
+| 9.0 | 78 | 20 | 26 (`viewersettings.ini`) | 1 (`iraysettings.ini`) | 7 | Universal SPP's profiles |
 
 `substance-version-tool --check FILE` prints the release and document data version of any project.
 One project saved by a release marked unknown is enough to fill in its row
@@ -230,20 +230,42 @@ and its derived layout equals 12.2's.
 ### 9.x / 10.x encoding
 
 Releases up to 10.x write the Data serializer in an older **"inline" encoding**: header
-word 0 instead of 1, every object tagged inline instead of a class table up front. A real
-9.1.2 project here has word 0, and [Universal SPP](https://github.com/Yeusepe/Universal-Painter-Files)
-(MIT; it diffs real 8.1 / 9.0 / 10.0 / 11.0 / 12.0 / 12.1 projects) writes inline for
-targets 10 and older. This tool writes word 1 for every target, which Painter 12.0.1 reads
-for any data version, so the 9.x / 10.x outputs were never really tested. The
-`future_binary_data.spp` used for 10.1 has header word 0xffffffff, so it is a 12.x test
-file rather than a 10.1 save; whether 10.1 itself is inline is unconfirmed. Fixing this
-means writing the inline encoding (Universal SPP's `_write_inline.py` shows it). Its
-profiles also give the data versions in the table above and an 8.1 = 70 boundary.
+word 0 instead of 1, and every object carries its class name and each field's name and
+type, instead of a class table up front. The layout is in `sppformat._InlineReader`; it
+was worked out from a real 9.1.2 project, which it reads and writes back byte for byte
+(all nine blobs, also via the registry encoding and back). Enums take 8 bytes there.
 
-Why 77 for 9.x / 10.0: the field timeline below has `strokes3D` (3D path strokes) appear
-in version 77, and paths are the headline feature of Painter 9.0, so 9.0 should be ≥ 77.
-If that guess is wrong, Painter says "created with a newer version" and nothing is harmed;
-`--data-version 73` then writes the oldest layout available.
+Everything a 9.x / 10.x target reads is rewritten in it: documents, and every settings
+blob, including the ones whose layout did not change (camera, colour profile, layer-stack
+state). Three settings blobs get their pre-11.0 names back (`viewersettings.ini`,
+`iraysettings.ini`, `layersstackstate.bin`). A settings blob that cannot be converted is
+left out rather than left as saved, since those releases could not decode it. The final
+check refuses a 9.x / 10.x output with any registry-encoded blob under `editor/`,
+`baking/` or `paint/`.
+
+10.1 is written inline too. The only 10.1 project at hand (`future_binary_data.spp`) has
+header word 0xffffffff with a class table, a marker no normal save has, so 10.1's own
+default is unknown, but 10.1 reads 10.0 projects, which are inline.
+
+[Universal SPP](https://github.com/Yeusepe/Universal-Painter-Files) (MIT; it diffs real
+8.1 / 9.0 / 10.0 / 11.0 / 12.0 / 12.1 projects) supplied the 9.0 and 10.0 rows of the table
+above and the field lists used to check those targets. Its profiles also show 8.1 = data
+version 70, below this tool's floor of 73.
+
+What probing 12.0.1 could not show, and where it came from (`OLD_NAMES` / `REMOVED` in
+`dev/gen_schemas.py`, emitted as `DOC_OLD_NAMES` / `DOC_REMOVED`):
+
+* `DataBrushStamp` was called `DataBrush` before data version 82 (the 9.1.2 project;
+  Universal SPP's 10.0 / 11.0 lists).
+* The stroke layers had `projDuplicates` and `stencilPostBlending` (bools, usually 0)
+  until data version 81 (paint layers in the 9.1.2 project; paint and eraser in Universal
+  SPP's 9.0 list, not in its 10.0 list). Projection-paint, smudge and clone layers are
+  given them by family, with no project to confirm (`DOC_REMOVED_ASSUMED`).
+* `DataLayerInstance` (layer instancing) is known at version 80 only (`DOC_OLDER_SEEN`).
+* `DataStroke3D` (3D paths) has no known layout before 88, so 9.x / 10.x outputs keep it as
+  it is, with a warning. Universal SPP's 11.0 list already differs from 12.0's.
+
+With those, the derived layouts equal the real 9.1.2 project's (37 classes, no mismatch).
 
 ## How the layouts were obtained
 
@@ -280,14 +302,16 @@ Result (one feature per version):
 | 85 | `DataActionFill.changeFlags` |
 | 89 | `DataGridDeformation.stickyBackupVertices`, `stickyState` |
 
-Checks on this: the layouts derived for 81 and 82 equal the layouts in the real 10.1 and
-11.0 projects (12 and 28 classes, no mismatch).
+Checks on this: the layouts derived for 80, 81, 82 and 88 equal the layouts in the real
+9.1, 10.1, 11.0 and 11.1 projects (37, 12, 28 and 46 classes, no mismatch), with the
+removals and the rename listed under "9.x / 10.x encoding".
 
 Limits of the method, i.e. where an old Painter could still refuse a converted file:
 
 * It finds fields that were **added**. A field that was renamed, removed or retyped
-  between 73 and 89 would not show up. None is visible in the real 81 / 82 projects, and a
-  12.0-layout document stamped anywhere from 73 to 88 loads, so there is probably none.
+  between 73 and 89 does not show up: Painter 12.0.1 loads an old document that lacks it.
+  Two such changes turned up in real 9.x projects (see "9.x / 10.x encoding"); there may
+  be more in classes those projects do not contain.
 * Below 73 something else changes (`Unknown struct type ''` at 70 – 72, a crash at ≤ 69,
   `Struct with non primitive member 'workflowLegacy'` at 60). 73 is the floor.
 * Classes are assumed to exist in every version. A project using a layer or effect type
@@ -377,21 +401,31 @@ The launcher also sets `QT_SCALE_FACTOR`, preloads the eyedropper shim and adds
 1. **Linux launcher: detect the installed Painter.** `install.sh` bakes `PAINTER_VERSION`
    (default 12.0.1) into the launcher. It could parse `--version` (see the top section)
    and pass the result as `--to` instead.
-2. **9.x / 10.x: write the inline encoding** (see "9.x / 10.x encoding"), then use the
-   known data versions (9.0 = 78, 9.1 = 80, 10.0 = 81) instead of 77. The 9.1.2 sample is
-   in `~/Documents/Development/spp-samples/9.1/`.
-3. Open a converted project in a real 11.x / 10.x / 9.x if one is ever at hand.
-4. One converted student project (→ 9.0) showed 2 of 414 fill effects under a different
-   display name in Painter 12.0.1 ('Card Diamonds' instead of 'card_diamonds'). Cause not
-   found; nothing else differed.
+2. **9.x / 10.x leftovers:** resources (export presets, `resources/*.spexp`) stay in the
+   registry encoding at their newer data version, with a warning; 3D path layers
+   (`DataStroke3D`) are kept in today's layout, with a warning; the `workflow/UVTiles`
+   project setting that 9.1 has is not written (10.1 does not have it either). A 9.0 or
+   10.0 project, or one with smudge / clone / projection-paint layers saved by 9.x, would
+   settle the remaining assumptions (`DOC_REMOVED_ASSUMED`).
+3. Open a converted project in a real 12.1 / 11.x / 10.x / 9.x if one is ever at hand. So
+   far: 9.0 / 9.1 / 10.0 / 10.1 outputs of 12.0, 12.1 and 12.2 projects all open in Painter
+   12.0.1 (which also reads the inline encoding). The real 9.1.2 project itself crashed
+   12.0.1 on open; not investigated.
+4. Effect display names in Painter 12.0.1 sometimes show the resource id ('card_diamonds',
+   'blur') instead of the name ('Card Diamonds', 'Blur') for a converted project. It is
+   Painter's doing, not the file's: opened again in the same session, the same 9.0 / 10.0
+   files show the right names, and a 10.1 file that was right before shows the ids.
+   Everything else in the layer tree matched the 12.0 original for 9.0 / 9.1 / 10.0 / 10.1.
 5. A project newer than data version 92 is refused unless `--force` is given. To support a
    newer Painter: add its changes as rules in `DataConverter` (compare its layouts with
    `schemas.DOC_89`), and if the installed Painter is newer too, re-run the probe so
    `DOC_ADDED` covers the new base. To make 12.2 a target then, run `dev/gen_schemas.py`
    with 12.2 projects once `NEWEST_DATA_VERSION` is raised: it builds `DOC_NEWER[92]`.
-6. Settings blobs with no conversion: post-effects 9 → 8 / 7 (11.x targets) fails because
-   `DataPostEffectsParameters` points at older-style objects the newer blob does not have,
-   so 11.x uses its default post effects. `DataReferenceBinding` (seen in 12.1 projects)
+6. Settings blobs with no conversion: post-effects 9 → 8 / 7 (targets 11.1 and older) fails
+   because `DataPostEffectsParameters` points at older-style objects the newer blob does not
+   have, so those releases use their default post effects (for 10.x and older the blob is
+   left out). In settings lists, entries of classes the target lacks are left out
+   (`DataConverter._keep`), and a 12.2 bake template becomes null. `DataReferenceBinding` (seen in 12.1 projects)
    has no known layout before 12.1 and is kept as it is, with a warning.
 7. `DataStroke3D` gained `stickyBackupPoints` / `stickyState` somewhere in 89 – 91, so its
    12.0 layout is unknown (`DOC_OLDER_SEEN` holds its 11.1 layout). The 12.0.1 probe could

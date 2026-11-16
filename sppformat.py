@@ -5,10 +5,13 @@ An .spp file is an HDF5 container. Every dataset is a 1-D uint8 blob carrying an
 Two blob formats matter for down-conversion:
 
 * The "Data" serializer (paint/document.bin, paint/default_material.bin, ...):
-  little-endian, self-describing.  Header = magic, 1, data_version, 18, class_count,
-  followed by the root object.  An object is ``u32 end_offset`` (absolute, 0 = null),
-  a class reference (``0xffffffff`` + inline definition, or index of an earlier
-  definition) and then each field's value in definition order.
+  little-endian, self-describing, in two encodings told apart by the header's second
+  word.  Painter 11.0 and later write the *registry* encoding (word 1): header = magic,
+  1, data_version, 18, class_count, followed by the root object.  An object is
+  ``u32 end_offset`` (absolute, 0 = null), a class reference (``0xffffffff`` + inline
+  definition, or index of an earlier definition) and then each field's value in
+  definition order.  Painter 10.x and older write the *inline* encoding (word 0), see
+  ``_InlineReader``.  Both use the same field type ids and parse to the same tree.
 
 * Qt ``QDataStream`` QVariantMaps (projectsettings.ini, texture-cache/header, ...):
   big-endian.
@@ -41,6 +44,7 @@ MAGIC = b'\xdd\x2f\x7c\x1b'
 FIXED = {1: 4, 2: 8, 3: 12, 4: 16, 5: 4, 6: 8, 9: 4, 10: 1, 11: 4, 12: 8,
          13: 36, 14: 64, 15: 8, 21: 8, 22: 16}
 STRING, ARRAY, OBJECT, OBJLIST, EMBED = 16, 17, 18, 19, 20
+REGISTRY, INLINE = 1, 0          # header word 1: the two encodings
 
 
 class FormatError(Exception):
@@ -153,10 +157,21 @@ def data_version(blob: bytes):
     return struct.unpack_from('<I', blob, 8)[0]
 
 
+def encoding(blob: bytes):
+    """REGISTRY or INLINE (the header's second word), or None for anything else."""
+    if len(blob) < 12 or blob[:4] != MAGIC:
+        return None
+    word = struct.unpack_from('<I', blob, 4)[0]
+    return INLINE if word == 0 else REGISTRY
+
+
 def parse(blob: bytes):
-    """Parse a Data blob -> (header [4 ints], root Obj)."""
+    """Parse a Data blob -> (header [4 ints], root Obj).  The header is [word,
+    data_version, root type, class count]; word is 0 for the inline encoding."""
     if blob[:4] != MAGIC:
         raise FormatError('not a Painter data blob')
+    if encoding(blob) == INLINE:
+        return _InlineReader(blob).parse()
     r = _Reader(blob)
     r.o = 4
     hdr = [r.u32() for _ in range(4)]
@@ -231,6 +246,9 @@ class _Writer:
 
 
 def write(hdr, root) -> bytes:
+    """Serialize a tree; hdr as returned by parse(), hdr[0] picks the encoding."""
+    if hdr[0] == INLINE:
+        return _InlineWriter().write(hdr[1], root)
     w = _Writer()
     w.buf += MAGIC
     for h in hdr:
@@ -269,6 +287,182 @@ def walk_classes(v, cb):
         for it in v.items:
             for fn, _ in v.klass.fields:
                 walk_classes(it[fn], cb)
+
+
+class _InlineReader:
+    """The inline encoding of Painter 10.x and older (header word 0).
+
+    Header = magic, 0, data_version (12 bytes), then the root as a tagged value.  Every
+    value starts with a one-byte tag, which is its field type id:
+
+    * fixed-size types: the raw bytes, except enums (9), which take 8 bytes here
+      (the value and 4 zero bytes) against 4 in the registry encoding
+    * 16 string: u32 length, bytes
+    * 18 object / 20 struct: one flag byte (0xff = null, 0 = present), u32 absolute end
+      offset, u32 length + class name, u16 field count, then per field u32 length +
+      field name and the field's tagged value
+    * 17 struct array / 19 object list: u32 absolute end offset, u32 count, then the
+      tagged elements (20 structs and 18 objects respectively)
+
+    Field names and types are written with every object, so there is no class table.
+    """
+
+    def __init__(self, b):
+        self.b, self.o, self.klasses = b, 0, {}
+
+    def raw(self, n):
+        if self.o + n > len(self.b):
+            raise FormatError(f'unexpected end of data reading {n} bytes at {self.o}')
+        v = self.b[self.o:self.o + n]
+        self.o += n
+        return v
+
+    def u8(self):
+        return self.raw(1)[0]
+
+    def u16(self):
+        return struct.unpack('<H', self.raw(2))[0]
+
+    def u32(self):
+        return struct.unpack('<I', self.raw(4))[0]
+
+    def parse(self):
+        self.o = 4
+        word, version = self.u32(), self.u32()
+        tag = self.u8()
+        if tag != OBJECT:
+            raise FormatError(f'inline data does not start with an object (tag {tag})')
+        root = self.obj()
+        if self.o != len(self.b):
+            raise FormatError(f'trailing data: parsed {self.o} of {len(self.b)} bytes')
+        return [word, version, OBJECT, 0], root
+
+    def obj(self):
+        start = self.o
+        flag = self.u8()
+        if flag == 0xFF:
+            return None
+        if flag != 0:
+            raise FormatError(f'unknown object flag {flag} at {start}')
+        end = self.u32()
+        name = self.raw(self.u32()).decode('ascii')
+        fields, values = [], {}
+        for _ in range(self.u16()):
+            fname = self.raw(self.u32()).decode('ascii')
+            t, values[fname] = self.value()
+            fields.append((fname, t))
+        if self.o != end:
+            raise FormatError(f'{name} at {start}: ended at {self.o}, header says {end}')
+        key = (name, tuple(fields))
+        k = self.klasses.get(key)
+        if k is None:
+            k = self.klasses[key] = Klass(name, fields)
+        return Obj(k, values)
+
+    def value(self):
+        t = self.u8()
+        if t == 9:
+            v = self.raw(8)
+            if any(v[4:]):
+                raise FormatError(f'enum with nonzero upper bytes at {self.o - 8}')
+            return t, v[:4]
+        if t in FIXED and t != 22:
+            return t, self.raw(FIXED[t])
+        if t == STRING:
+            return t, self.raw(self.u32())
+        if t in (OBJECT, EMBED):
+            return t, self.obj()
+        if t in (ARRAY, OBJLIST):
+            end, n = self.u32(), self.u32()
+            items = []
+            for _ in range(n):
+                e = self.u8()
+                if e not in (OBJECT, EMBED):
+                    raise FormatError(f'array element tag {e} at {self.o - 1}')
+                items.append(self.obj())
+            if self.o != end:
+                raise FormatError(f'array ended at {self.o}, header says {end}')
+            if t == OBJLIST:
+                return t, items
+            if not items:
+                return t, Arr(None, [])
+            k = items[0].klass if items[0] else None
+            if k is None or any(it is None or it.klass is not k for it in items):
+                raise FormatError(f'struct array with mixed or null elements before {end}')
+            return t, Arr(k, [it.values for it in items])
+        raise FormatError(f'unknown value tag {t} at {self.o - 1}')
+
+
+class _InlineWriter:
+    def __init__(self):
+        self.buf = bytearray()
+
+    def u32(self, v):
+        self.buf += struct.pack('<I', v)
+
+    def name(self, s):
+        e = s.encode('ascii')
+        self.u32(len(e))
+        self.buf += e
+
+    def write(self, version, root):
+        self.buf += MAGIC
+        self.u32(INLINE)
+        self.u32(version)
+        self.obj(OBJECT, root)
+        return bytes(self.buf)
+
+    def obj(self, tag, o):
+        self.buf.append(tag)
+        if o is None:
+            self.buf.append(0xFF)
+            return
+        self.body(o.klass, o.values)
+
+    def body(self, k, vals):
+        self.buf.append(0)
+        pos = len(self.buf)
+        self.u32(0)
+        self.name(k.name)
+        if len(k.fields) > 0xFFFF:
+            raise FormatError(f'{k.name}: too many fields for the inline encoding')
+        self.buf += struct.pack('<H', len(k.fields))
+        for fn, ft in k.fields:
+            self.name(fn)
+            self.value(ft, vals[fn])
+        struct.pack_into('<I', self.buf, pos, len(self.buf))
+
+    def value(self, t, v):
+        if t == 22:
+            raise FormatError('128-bit channel masks have no inline encoding')
+        if t in FIXED:
+            if len(v) != FIXED[t]:
+                raise FormatError(f'type {t} value has {len(v)} bytes, expected {FIXED[t]}')
+            self.buf.append(t)
+            self.buf += v
+            if t == 9:
+                self.buf += bytes(4)
+        elif t == STRING:
+            self.buf.append(t)
+            self.u32(len(v))
+            self.buf += v
+        elif t in (OBJECT, EMBED):
+            self.obj(t, v)
+        elif t in (ARRAY, OBJLIST):
+            self.buf.append(t)
+            pos = len(self.buf)
+            self.u32(0)
+            items = v.items if t == ARRAY else v
+            self.u32(len(items))
+            for it in items:
+                if t == ARRAY:
+                    self.buf.append(EMBED)
+                    self.body(v.klass, it)
+                else:
+                    self.obj(OBJECT, it)
+            struct.pack_into('<I', self.buf, pos, len(self.buf))
+        else:
+            raise FormatError(f'cannot write field type {t}')
 
 
 # ---------------------------------------------------------------------------

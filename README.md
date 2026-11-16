@@ -100,25 +100,23 @@ The launcher's last conversion log is at `~/.cache/spp-downgrade/launch.log`.
 | 12.0 | 12.0 format (data version 89) | format read from 12.0 projects; **converted files tested in Painter 12.0.1** |
 | 11.1 | 11.1 format (data version 88) | format read from an 11.1 project; not tested in Painter 11.1 itself |
 | 11.0 | 11.0 format (data version 82) | format read from 11.0 projects; not tested in Painter 11.0 itself |
-| 10.1 | 10.1 format (data version 81) | format read from a 10.1 project; not tested in Painter 10.1 itself |
-| 10.0, 9.1, 9.0 | data version 77 | **best estimate** — see below |
+| 10.1 | 10.x format (data version 81) | format read from a 10.1 project; not tested in Painter 10.1 itself |
+| 10.0 | 10.x format (data version 81) | format from real 10.0 projects (via Universal SPP, see below); not tested in Painter 10.0 itself |
+| 9.1 | 9.1 format (data version 80) | format read from a 9.1 project; not tested in Painter 9.1 itself |
+| 9.0 | 9.0 format (data version 78) | format from real 9.0 projects (via Universal SPP); not tested in Painter 9.0 itself |
 
-No project saved by 9.0, 9.1 or 10.0 was available, so their exact format numbers are
-unknown. Data version 77 is the one that introduced 3D path strokes, the headline feature
-of 9.0, so all three should accept it. If one of them says the project was "created with a
-newer version", retry with `--data-version 73` (the oldest layout the tool can write).
-`substance-version-tool --check` on any project saved by one of these releases prints the number that
-would settle it.
+Painter 10.x and older store project data in an older binary encoding than 11.0 and later,
+with each object's field names written out in full. The tool writes that encoding for
+those targets. It reproduces a real 9.1 project byte for byte, and a converted 9.1 copy
+has exactly the datasets and layouts of a real one.
 
-**Known problem with 9.x / 10.x:** a project saved by Painter 9.1 turned out to use an older
-binary encoding than 11.0 and later, and the tool writes the newer one for every target. So
-9.x and 10.x will most likely refuse the converted file, even though Painter 12.0.1 opens
-it. Until that is fixed, these targets are not expected to work.
-
-Only Painter 12.0.1 was available for testing. For 12.1 and 11.1, the layouts come from
-projects saved by those releases. For the older targets, they come from Painter 12.0.1's
-own upgrade code (see `HANDOFF.md`), and Painter 12.0.1 accepts every converted file as a
-genuine project of that age. No actual 9.x / 10.x / 11.x / 12.1 install has opened one.
+Only Painter 12.0.1 was available for testing. For 12.1, 11.1 and 9.1 the layouts come from
+projects saved by those releases. For 9.0 and 10.0 they come from the field lists of
+[Universal SPP](https://github.com/Yeusepe/Universal-Painter-Files), a separate MIT-licensed
+converter whose profiles were made from real 9.0 and 10.0 projects. The rest come from
+Painter 12.0.1's own upgrade code (see `HANDOFF.md`), and Painter 12.0.1 accepts every
+converted file as a genuine project of that age. No actual 9.x / 10.x / 11.x / 12.1 install
+has opened one.
 
 ## What changes in the copy
 
@@ -134,11 +132,20 @@ project actually used. The older the target, the longer that list can get:
 | 12.0 | warp-projection sticky points |
 | 11.1 | fill-layer symmetry, layer-stack type |
 | 11.0 | resolution override of procedural / text / vector sources |
-| 10.1 | text letter and line spacing |
-| 9.x / 10.0 (data version 77) | layer cache pins, the fill layers' UV-transfer channel, stroke / path names |
+| 10.0 | text letter and line spacing |
+| 9.1 | layer cache pins, the fill layers' UV-transfer channel |
 
-Viewer, shader and baking settings are converted for 12.0 / 12.1 (and partly for 11.x).
-Where they cannot be, they are left as saved and Painter falls back to its defaults for them.
+Viewer, shader and baking settings are converted for every target; entries a target has
+no place for (newer bakers, tweaks, bake templates) are left out. Post-effects settings
+cannot be rebuilt in the layout before 12.0, so for 9.x – 11.x Painter uses its default
+post effects (unless the project comes from 11.1). For 11.x and newer, settings that
+cannot be converted are left as saved and Painter falls back to its defaults for them;
+for 10.x and older they are left out, because those releases cannot decode the newer
+encoding at all.
+
+Two gaps for 9.x / 10.x: 3D path strokes (paths) are kept in today's layout, which those
+releases may reject (the tool warns when a project has any), and resources such as export
+presets stay in the newer format (also with a warning).
 
 A layer type that did not exist yet in the target release cannot be converted; Painter
 will refuse such a project.
