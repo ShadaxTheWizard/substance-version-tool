@@ -1,9 +1,8 @@
 # Handoff: Substance Version Tool
 
 Status as of 2026-11-16. Public on GitHub (`ShadaxTheWizard/substance-version-tool`), MIT-licensed;
-the public history starts at 0.2.0. The Linux AppImage build has passed in CI before the
-move. The Windows build and the GitHub workflow are new: **check the first GitHub Actions
-run**. Not yet done: a run of the app's real window on a desktop (only the off-screen
+the public history starts at 0.2.0. Release v0.2.0 is out (Windows installer + portable zip,
+Linux AppImage), built and self-tested by GitHub Actions on the first try. Not yet done: a run of the app's real window on a desktop (only the off-screen
 self-test has run), and any test on a real Windows machine.
 
 ## The app (Substance Version Tool)
