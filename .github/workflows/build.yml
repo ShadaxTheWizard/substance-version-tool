@@ -2,8 +2,15 @@
 # push and pull request; each run keeps the builds as artifacts on its page.
 #
 # Pushing a tag vX.Y.Z (matching __version__ in spp_convert.py) also creates the GitHub
-# release for that tag with all builds and their .sha256 files attached. It uses only the
-# workflow's own GITHUB_TOKEN; there are no other secrets.
+# release for that tag with all builds and their .sha256 files attached.
+#
+# Windows code signing (SignPath Foundation) runs on release tags once it is set up in the
+# repository settings, never from code in this file:
+#   variable  SIGNPATH_ORGANIZATION_ID   turns signing on
+#   secret    SIGNPATH_API_TOKEN         SignPath API token of a submitter
+#   variables SIGNPATH_PROJECT_SLUG, SIGNPATH_POLICY_SLUG   optional, see the defaults below
+# Each signing request waits for its approval in SignPath (two per release: the app, then the
+# installer built from the signed app). Without the variable, builds are left unsigned.
 name: build
 
 on:
@@ -55,6 +62,8 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      SIGN: ${{ startsWith(github.ref, 'refs/tags/v') && vars.SIGNPATH_ORGANIZATION_ID != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -66,8 +75,86 @@ jobs:
             choco install innosetup -y --no-progress
           }
 
-      - name: Build and self-test
-        run: packaging/build-windows.sh
+      - name: Build and self-test the app
+        run: packaging/build-windows.sh bundle
+
+      # --- signing the app (release tags with SignPath set up) ---
+      - name: Upload the app for signing
+        id: unsigned-app
+        if: env.SIGN == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: windows-app-unsigned
+          path: build/windows/out/
+          if-no-files-found: error
+
+      - name: Sign the app (approve the request in SignPath)
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092  # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'substance-version-tool' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: app
+          github-artifact-id: ${{ steps.unsigned-app.outputs.artifact-id }}
+          wait-for-completion-timeout-in-seconds: 7200
+          output-artifact-directory: build/windows/signed-app
+
+      - name: Use the signed app
+        if: env.SIGN == 'true'
+        run: |
+          rm -rf "build/windows/out/Substance Version Tool"
+          mv "build/windows/signed-app/Substance Version Tool" build/windows/out/
+          packaging/build-windows.sh selftest
+
+      - name: Installer and portable zip
+        run: packaging/build-windows.sh package
+
+      # --- signing the installer ---
+      - name: Stage the installer for signing
+        if: env.SIGN == 'true'
+        run: |
+          mkdir -p build/windows/setup
+          cp dist/*-setup.exe build/windows/setup/setup.exe
+      - name: Upload the installer for signing
+        if: env.SIGN == 'true'
+        id: unsigned-setup-artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: windows-setup-unsigned
+          path: build/windows/setup/
+          if-no-files-found: error
+
+      - name: Sign the installer (approve the request in SignPath)
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092  # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'substance-version-tool' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.unsigned-setup-artifact.outputs.artifact-id }}
+          wait-for-completion-timeout-in-seconds: 7200
+          output-artifact-directory: build/windows/signed-setup
+
+      - name: Use the signed installer
+        if: env.SIGN == 'true'
+        run: |
+          cp build/windows/signed-setup/setup.exe dist/*-setup.exe
+          packaging/build-windows.sh checksums
+
+      - name: Check the signatures
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          $files = @(Get-Item "build/windows/out/Substance Version Tool/Substance Version Tool.exe") + @(Get-ChildItem dist/*-setup.exe)
+          foreach ($f in $files) {
+            $sig = Get-AuthenticodeSignature -LiteralPath $f.FullName
+            "{0}: {1} ({2})" -f $f.Name, $sig.Status, $sig.SignerCertificate.Subject
+            if ($sig.Status -ne 'Valid') { throw "$($f.Name) is not validly signed" }
+          }
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
@@ -95,7 +182,11 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           version=${TAG#v}
-          sed "s/{version}/$version/g" packaging/release-notes.md > "$RUNNER_TEMP/notes.md"
+          # The "not signed yet" paragraph only while Windows signing is not set up.
+          if [ -n "${{ vars.SIGNPATH_ORGANIZATION_ID }}" ]; then drop='/<!-- unsigned -->/,/<!-- \/unsigned -->/d'
+          else drop='/<!-- \/\{0,1\}unsigned -->/d'; fi
+          sed -e "$drop" -e "s/{version}/$version/g" packaging/release-notes.md > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
           ls -l dist/
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber

@@ -3,14 +3,20 @@
 # with a .sha256. Run by CI (.github/workflows/build.yml, GitHub's Windows runners) and
 # usable by hand in Git Bash (Git for Windows):
 #
-#   packaging/build-windows.sh
+#   packaging/build-windows.sh              # everything below, in order
+#   packaging/build-windows.sh bundle       # the app folder (PyInstaller) + self-test
+#   packaging/build-windows.sh selftest     # run the self-test again (e.g. after signing)
+#   packaging/build-windows.sh package      # installer + portable zip from that folder
+#   packaging/build-windows.sh checksums    # (re)write the .sha256 files in dist/
+#
+# CI runs the stages one at a time so that SignPath can sign the app between "bundle" and
+# "package", and the installer after "package" (see the workflow).
 #
 # Needs PowerShell (part of Windows) and Inno Setup 6 (ISCC.exe on PATH or in its default
 # folder; `choco install innosetup` or https://jrsoftware.org). The app's Python is a
 # python-build-standalone build fetched by uv, which is used from PATH when present,
 # otherwise downloaded (pinned, checksum-verified) into build/windows/tools.
 #
-# The builds are not signed yet (see HANDOFF.md, "Windows").
 set -euo pipefail
 # Pass arguments to Windows programs exactly as written: Git Bash would otherwise rewrite
 # anything that looks like a path, including ISCC's /D options.
@@ -34,12 +40,53 @@ if [ "${GITHUB_REF_TYPE:-}" = tag ] && [ "${GITHUB_REF_NAME:-}" != "v$version" ]
     echo "tag ${GITHUB_REF_NAME} does not match __version__ $version (expected v$version)" >&2
     exit 1
 fi
+app="$build/out/Substance Version Tool"
+stage=${1:-all}
 
-iscc=$(command -v iscc || command -v ISCC || true)
-for d in "${PROGRAMFILES:-}" "${PROGRAMFILES:-} (x86)" "C:/Program Files (x86)" "${LOCALAPPDATA:-}/Programs"; do
-    [ -z "$iscc" ] && [ -f "$d/Inno Setup 6/ISCC.exe" ] && iscc="$d/Inno Setup 6/ISCC.exe"
-done
-[ -n "$iscc" ] || { echo "Inno Setup 6 (ISCC.exe) not found; install it (choco install innosetup)" >&2; exit 1; }
+selftest() {
+    echo "-- self-test"
+    # The app has no console, so the result goes to a log file (see report_self_test()).
+    rm -f "$build/selftest.log"
+    local rc=0
+    SPP_SELFTEST_LOG="$build/selftest.log" QT_QPA_PLATFORM=offscreen \
+        timeout 300 "$app/Substance Version Tool.exe" --self-test || rc=$?
+    cat "$build/selftest.log" 2>/dev/null || echo "(no self-test log written)"
+    [ "$rc" = 0 ] || { echo "self-test failed (exit code $rc)" >&2; exit 1; }
+}
+
+checksums() {
+    (cd "$dist" && rm -f ./*.sha256 && for f in *.exe *.zip; do sha256sum "$f" > "$f.sha256"; done)
+    ls -l "$dist"
+}
+
+package() {
+    local iscc
+    iscc=$(command -v iscc || command -v ISCC || true)
+    for d in "${PROGRAMFILES:-}" "${PROGRAMFILES:-} (x86)" "C:/Program Files (x86)" "${LOCALAPPDATA:-}/Programs"; do
+        [ -z "$iscc" ] && [ -f "$d/Inno Setup 6/ISCC.exe" ] && iscc="$d/Inno Setup 6/ISCC.exe"
+    done
+    [ -n "$iscc" ] || { echo "Inno Setup 6 (ISCC.exe) not found; install it (choco install innosetup)" >&2; exit 1; }
+    [ -f "$app/Substance Version Tool.exe" ] || { echo "no app in $app; run the bundle stage first" >&2; exit 1; }
+
+    echo "-- installer"
+    rm -rf "$dist"
+    mkdir -p "$dist"
+    "$iscc" /Qp "/DAppVersion=$version" "/DSourceDir=$app" "/DOutputDir=$dist" \
+        "/DIconFile=$build/icon/substance-version-tool.ico" packaging/windows/substance-version-tool.iss
+
+    echo "-- portable zip"
+    local portable=Substance_Version_Tool-$version-windows-x64-portable.zip
+    powershell -NoProfile -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::CreateFromDirectory('$app', '$dist/$portable', 'Optimal', \$true)"
+    checksums
+}
+
+case $stage in
+    all|bundle) ;;
+    selftest) selftest; exit 0 ;;
+    package) package; exit 0 ;;
+    checksums) checksums; exit 0 ;;
+    *) echo "unknown stage: $stage (bundle, selftest, package, checksums)" >&2; exit 1 ;;
+esac
 
 rm -rf "$build/venv" "$build/work" "$build/out" "$build/icon"
 mkdir -p "$tools" "$build/icon"
@@ -100,26 +147,6 @@ echo "-- bundling Substance Version Tool $version"
     --add-data "$build/icon/substance-version-tool.png;." \
     --exclude-module tkinter \
     substance_version_tool.py
-app="$build/out/Substance Version Tool"
-
-echo "-- smoke test"
-# The app has no console, so the result goes to a log file (see report_self_test()).
-rm -f "$build/selftest.log"
-rc=0
-SPP_SELFTEST_LOG="$build/selftest.log" QT_QPA_PLATFORM=offscreen \
-    timeout 300 "$app/Substance Version Tool.exe" --self-test || rc=$?
-cat "$build/selftest.log" 2>/dev/null || echo "(no self-test log written)"
-[ "$rc" = 0 ] || { echo "self-test failed (exit code $rc)" >&2; exit 1; }
-
-echo "-- installer"
-rm -rf "$dist"
-mkdir -p "$dist"
-"$iscc" /Qp "/DAppVersion=$version" "/DSourceDir=$app" "/DOutputDir=$dist" \
-    "/DIconFile=$build/icon/substance-version-tool.ico" packaging/windows/substance-version-tool.iss
-
-echo "-- portable zip"
-portable=Substance_Version_Tool-$version-windows-x64-portable.zip
-powershell -NoProfile -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::CreateFromDirectory('$app', '$dist/$portable', 'Optimal', \$true)"
-
-(cd "$dist" && for f in *.exe *.zip; do sha256sum "$f" > "$f.sha256"; done)
-ls -l "$dist"
+selftest
+[ "$stage" = all ] && package
+exit 0

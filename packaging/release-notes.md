@@ -5,7 +5,9 @@ Substance Version Tool {version} makes a Substance 3D Painter project open in an
 * **Installer:** `Substance_Version_Tool-{version}-windows-x64-setup.exe`. Installs for your user without admin rights and can add *Convert with Substance Version Tool* to the right-click menu of `.spp` files.
 * **Portable:** `Substance_Version_Tool-{version}-windows-x64-portable.zip`. Unzip anywhere and run `Substance Version Tool.exe`.
 
+<!-- unsigned -->
 These builds are not code-signed yet, so Windows SmartScreen may say "Windows protected your PC": choose *More info* → *Run anyway*.
+<!-- /unsigned -->
 
 ### Linux (x86_64)
 

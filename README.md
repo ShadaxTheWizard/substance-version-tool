@@ -22,9 +22,9 @@ Download it from the [Releases](https://github.com/ShadaxTheWizard/substance-ver
 
 **Windows:** run `Substance_Version_Tool-<version>-windows-x64-setup.exe` (installs for your user, no
 admin rights needed, and can add *Convert with Substance Version Tool* to the right-click menu of
-`.spp` files), or unzip the portable `.zip` anywhere and run `Substance Version Tool.exe`. The builds
-are not code-signed yet, so SmartScreen may say "Windows protected your PC": choose
-*More info* → *Run anyway*.
+`.spp` files), or unzip the portable `.zip` anywhere and run `Substance Version Tool.exe`.
+Until code signing is in place (see [Code signing policy](#code-signing-policy)), SmartScreen
+may say "Windows protected your PC": choose *More info* → *Run anyway*.
 
 **Linux:** make `Substance_Version_Tool-<version>-x86_64.AppImage` executable and run it:
 
@@ -44,6 +44,12 @@ to the app launcher.
    and preselected; on Windows pick it by hand for now.
 3. Press *Convert*. The copies are written next to each project, or into a folder you
    choose, as `<name>_<version>.spp`; the report lists what the older release cannot store.
+
+**Updates.** On its first start the app asks whether it may check GitHub for a newer version
+each time it starts (*Help → Check for Updates at Start* changes that; *Help → Check for
+Updates…* checks once). When there is one, a bar offers to update: the installed Windows app
+and the AppImage download it, check it, replace themselves and restart; the portable zip
+and a checkout open the release page instead.
 
 Without the download, from a checkout: `pip install h5py numpy mmh3 PySide6-Essentials`,
 then `python3 substance_version_tool.py`.
@@ -177,13 +183,37 @@ The tag build creates the GitHub release with every build and its `.sha256` atta
 the notes in `packaging/release-notes.md`. The build scripts also work by hand and leave
 their output in `dist/` (Linux needs `mksquashfs`; Windows needs Git Bash and Inno Setup 6).
 
+## Code signing policy
+
+Windows release builds are signed with free code signing provided by
+[SignPath.io](https://about.signpath.io), certificate by
+[SignPath Foundation](https://signpath.org) (application pending: until it is approved, the
+Windows builds are unsigned).
+
+* Committers and reviewers: [Shadax](https://github.com/ShadaxTheWizard)
+* Approvers: [Shadax](https://github.com/ShadaxTheWizard)
+
+Only the files attached to this repository's
+[GitHub releases](https://github.com/ShadaxTheWizard/substance-version-tool/releases) are
+signed. They are built by GitHub Actions from this repository's source
+(`.github/workflows/build.yml`), and every signing request is approved by hand.
+
+### Privacy
+
+This program will not transfer any information to other networked systems unless
+specifically requested by the user or the person installing or operating it. Its only
+network access is the update check and download from github.com, which it does only after
+the user agreed to it on first start (or chose *Help → Check for Updates…*); the request
+carries nothing but the app's version in its User-Agent.
+
 ## Files
 
 | file | purpose |
 |---|---|
 | `spp_convert.py` | converter + CLI (`convert(src, dst, Target("11.0"))` is the entry point for other front ends) |
+| `updater.py` | update check, download and install (standard library only) |
 | `substance_version_tool.py` | the Substance Version Tool app (PySide6) |
-| `packaging/` | app builds (`build-linux.sh`, `build-windows.sh`, `windows/substance-version-tool.iss`), pinned build requirements, icon, `.desktop` file, release notes |
+| `packaging/` | app builds (`build-linux.sh`, `build-windows.sh`, `windows/substance-version-tool.iss`), pinned build requirements, icon, `.desktop` file, release notes, SignPath artifact configurations (`signpath/`) |
 | `.github/workflows/build.yml` | CI: build, self-test and release the app |
 | `sppformat.py` | readers/writers for Painter's binary formats |
 | `schemas.py` | class layouts per data version (generated; see `dev/`) |

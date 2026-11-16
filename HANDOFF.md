@@ -2,7 +2,8 @@
 
 Status as of 2026-11-16. Public on GitHub (`ShadaxTheWizard/substance-version-tool`), MIT-licensed;
 the public history starts at 0.2.0. Release v0.2.0 is out (Windows installer + portable zip,
-Linux AppImage), built and self-tested by GitHub Actions on the first try. Not yet done: a run of the app's real window on a desktop (only the off-screen
+Linux AppImage), built and self-tested by GitHub Actions; the Windows build works on a real
+PC. 0.3.0 adds the updater and the (dormant) SignPath signing steps. Not yet done: a run of the app's real window on a desktop (only the off-screen
 self-test has run), and any test on a real Windows machine.
 
 ## The app (Substance Version Tool)
@@ -62,13 +63,45 @@ installer's `AppId`. **Never built or run on a real Windows machine yet**; to ch
   registry entry rather than run it (it is a windowed program). Locations: Creative Cloud
   (`C:\Program Files\Adobe\Adobe Substance 3D Painter\`) and Steam.
 
-**Signing.** The builds are unsigned, so SmartScreen warns ("More info → Run anyway").
-Plan: apply to the SignPath Foundation (free code signing for open-source projects; the
-certificate is issued to SignPath Foundation, which then shows as the publisher). Their
-conditions: OSI license (MIT ✓), public repository ✓, MFA for all team members on
-SignPath and GitHub, binaries built by CI from the public source, and a code-signing policy
-page in the project. After approval, add their signing step to the `windows` job (sign the
-`.exe` files before Inno Setup packs them, then the installer).
+**Signing** (SignPath Foundation: free for open-source projects; the certificate is issued
+to SignPath Foundation, which shows as the publisher). Wired into the workflow, off until the
+repository has the settings below. Steps for the maintainer:
+
+1. GitHub: two-factor login on (SignPath requires MFA for everyone on the project).
+2. Apply at https://signpath.org (project: this repo; MIT; README has the code signing
+   policy section they look for). Approval is a manual review and can be refused.
+3. After approval, in SignPath: note the organization ID; check the project slug (default
+   expected: `substance-version-tool`) and the signing policy slug (`release-signing`);
+   create the artifact configurations `app` and `installer` from `packaging/signpath/*.xml`;
+   connect the GitHub repository as trusted build system; create an API token for a
+   submitter user.
+4. GitHub repo → Settings → Secrets and variables → Actions: secret `SIGNPATH_API_TOKEN`,
+   variable `SIGNPATH_ORGANIZATION_ID` (and `SIGNPATH_PROJECT_SLUG` / `SIGNPATH_POLICY_SLUG`
+   if they differ). Nothing goes into the code.
+5. Tag a release, then approve two signing requests in SignPath (the app; then the installer
+   built from the signed app). The job waits up to 2 h for each. The release notes drop the
+   "not signed yet" paragraph automatically, and a check step fails the build if a signature
+   is not valid. Then remove "(application pending…)" from the README's policy section.
+
+The XML in `packaging/signpath/` follows SignPath's artifact-configuration format as far as it
+could be checked without an account: verify it in their editor when pasting.
+
+### Updates
+
+`updater.py` (standard library only), used by the Help menu and a banner in the window.
+Nothing is sent before the user agrees: the first start asks; the answer is in QSettings
+`check_updates` (`yes` / `no`). The check is a HEAD request to
+`github.com/<repo>/releases/latest` (the redirect names the newest tag; no REST API, whose
+60 requests per hour per IP a classroom would exhaust). Install kinds: `installer` (Windows,
+`unins000.exe` next to the exe) downloads the setup, checks its `.sha256` and runs it with
+`/SILENT /SUPPRESSMSGBOXES /NORESTART /RELAUNCH` plus `/CURRENTUSER` or `/ALLUSERS` to match
+the install (the `.iss` restarts the app on `/RELAUNCH`); `appimage` downloads next to
+`$APPIMAGE`, checks it and renames it over the old file, then starts it; `portable` and
+`source` open the release page. When the running Windows app is signed, a new installer must
+carry a valid signature with the same signer subject (`check_publisher()`); unsigned builds
+skip that. `--check-update` prints what the app would see. Tested on Linux against the real
+v0.2.0 release (download, checksum, refusal of a wrong checksum, banner flow); the Windows
+installer path has only run once the first release with the updater is replaced by a newer one.
 
 ### CI and releases
 

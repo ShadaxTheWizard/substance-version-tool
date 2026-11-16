@@ -9,6 +9,7 @@ modified.  The conversion itself is spp_convert.convert(), the same code the CLI
     substance-version-tool [FILE.spp ...]
     substance-version-tool --version
     substance-version-tool --self-test      # for CI: checks the bundled libraries load, then exits
+    substance-version-tool --check-update   # prints the newest release and how this copy updates
 """
 import glob
 import io
@@ -17,11 +18,13 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 
-from PySide6.QtCore import QSettings, Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QShortcut
+from PySide6.QtCore import QObject, QSettings, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import (QAction, QDesktopServices, QFont, QFontDatabase, QIcon, QKeySequence,
+                           QPainter, QShortcut)
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog,
+    QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
     QPushButton, QRadioButton, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -29,6 +32,7 @@ from PySide6.QtWidgets import (
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import spp_convert as sc                                 # noqa: E402
 import sppformat as sf                                   # noqa: E402
+import updater                                           # noqa: E402
 
 APP_NAME = 'Substance Version Tool'
 PATH_ROLE = Qt.ItemDataRole.UserRole
@@ -107,6 +111,20 @@ def painter_version(exe):
     return m.group(1) if m else None
 
 
+def open_external(target):
+    """Open a folder or a web address with the desktop's default program."""
+    if sys.platform.startswith('linux'):
+        # Not QDesktopServices: it would hand the file manager this app's environment.
+        try:
+            subprocess.Popen(['xdg-open', target], env=child_env(), stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+            return
+        except OSError:
+            pass
+    QDesktopServices.openUrl(QUrl(target) if '://' in target else QUrl.fromLocalFile(target))
+
+
 class PainterDetector(QThread):
     found = Signal(list)       # ['12.0.1', ...], newest first
 
@@ -142,6 +160,17 @@ class Converter(QThread):
             buf = io.StringIO()
             sc.print_report(report, src, dst, out=buf)
             self.finished_one.emit(src, True, buf.getvalue(), dst)
+
+
+class UpdateSignals(QObject):
+    """Results of the update check and download, which run in plain daemon threads (a
+    pending network request then never holds up quitting)."""
+    found = Signal(str)                 # newer version
+    uptodate = Signal(str, bool)        # newest version, manual check
+    failed = Signal(str, bool)          # message, manual check
+    progress = Signal(int)              # percent, -1 if unknown
+    ready = Signal(str)                 # downloaded file
+    download_failed = Signal(str)
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +217,7 @@ class FileList(QTreeWidget):
 
 
 class Window(QMainWindow):
-    def __init__(self):
+    def __init__(self, check_updates=True):
         super().__init__()
         self.setWindowTitle(APP_NAME)
         self.settings = QSettings()
@@ -197,10 +226,51 @@ class Window(QMainWindow):
         self.user_picked_target = False
         self.last_output_dir = None
         self.shown_target = None
+        self.update_busy = False
+        self.update_version = None
+        self.banner_mode = None
+        self.upd = UpdateSignals(self)
+        self.upd.found.connect(self._update_found)
+        self.upd.uptodate.connect(self._update_uptodate)
+        self.upd.failed.connect(self._update_check_failed)
+        self.upd.progress.connect(self._update_progress)
+        self.upd.ready.connect(self._update_ready)
+        self.upd.download_failed.connect(self._update_download_failed)
+
+        help_menu = self.menuBar().addMenu('&Help')
+        act = QAction('Check for Updates…', self)
+        act.triggered.connect(lambda: self.check_updates(manual=True))
+        help_menu.addAction(act)
+        self.auto_update_act = QAction('Check for Updates at Start', self, checkable=True)
+        self.auto_update_act.setChecked(self.settings.value('check_updates') == 'yes')
+        self.auto_update_act.toggled.connect(
+            lambda on: self.settings.setValue('check_updates', 'yes' if on else 'no'))
+        help_menu.addAction(self.auto_update_act)
+        help_menu.addSeparator()
+        act = QAction(f'About {APP_NAME}', self)
+        act.triggered.connect(self._about)
+        help_menu.addAction(act)
 
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
+
+        # Banner for the first-start question and for updates; hidden until needed.
+        self.banner = QFrame()
+        self.banner.setFrameShape(QFrame.Shape.StyledPanel)
+        root.addWidget(self.banner)
+        bar = QHBoxLayout(self.banner)
+        bar.setContentsMargins(10, 6, 6, 6)
+        self.banner_label = QLabel()
+        self.banner_label.setWordWrap(True)
+        bar.addWidget(self.banner_label, 1)
+        self.banner_buttons = []
+        for i in range(3):
+            b = QPushButton()
+            b.clicked.connect(lambda _=False, i=i: self._banner_clicked(i))
+            bar.addWidget(b)
+            self.banner_buttons.append(b)
+        self.banner.hide()
 
         # Target release
         row = QHBoxLayout()
@@ -292,6 +362,9 @@ class Window(QMainWindow):
         self.detector = PainterDetector()
         self.detector.found.connect(self._painter_found)
         self.detector.start()
+
+        if check_updates:
+            QTimer.singleShot(1500, self._startup_update_check)
 
     # -- target -------------------------------------------------------------
     def _fill_targets(self, installed):
@@ -530,18 +603,140 @@ class Window(QMainWindow):
             self.close()
 
     def _show_output(self):
-        if not self.last_output_dir:
+        if self.last_output_dir:
+            open_external(self.last_output_dir)
+
+    # -- updates --------------------------------------------------------------
+    # Nothing is sent anywhere unless the user agreed: the first start asks whether to
+    # check for updates (Help menu to change it later). A check is one request to
+    # github.com; see updater.py.
+    def _show_banner(self, mode, text, buttons):
+        self.banner_mode = mode
+        self.banner_label.setText(text)
+        for b, label in zip(self.banner_buttons, buttons + [None] * 3):
+            b.setVisible(bool(label))
+            b.setEnabled(True)
+            if label:
+                b.setText(label)
+        self.banner.show()
+
+    def _startup_update_check(self):
+        choice = self.settings.value('check_updates')
+        if choice is None:
+            self._show_banner('ask', f'Should {APP_NAME} check GitHub for a newer version each time '
+                              'it starts? Nothing else is sent.', ['Yes', 'No'])
+        elif choice == 'yes':
+            self.check_updates(manual=False)
+
+    def check_updates(self, manual=False):
+        if self.update_busy:
             return
-        if sys.platform.startswith('linux'):
-            # Not QDesktopServices: it would hand the file manager this app's environment.
+        self.update_busy = True
+        current = sc.__version__
+
+        def work():
             try:
-                subprocess.Popen(['xdg-open', self.last_output_dir], env=child_env(),
-                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                 stderr=subprocess.DEVNULL, start_new_session=True)
+                latest = updater.latest_version()
+            except updater.UpdateError as e:
+                self.upd.failed.emit(str(e), manual)
                 return
-            except OSError:
-                pass
-        QDesktopServices.openUrl(QUrl.fromLocalFile(self.last_output_dir))
+            if updater.version_tuple(latest) > updater.version_tuple(current):
+                self.upd.found.emit(latest)
+            else:
+                self.upd.uptodate.emit(latest, manual)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _update_found(self, version):
+        self.update_busy = False
+        self.update_version = version
+        can_install = updater.install_kind() in ('installer', 'appimage')
+        self._show_banner('update', f'<b>Version {version} is available</b> (you have {sc.__version__}).',
+                          ['Update and restart' if can_install else 'Download…', "What's new", 'Later'])
+
+    def _update_uptodate(self, latest, manual):
+        self.update_busy = False
+        if manual:
+            QMessageBox.information(self, APP_NAME, f'You have the newest version ({sc.__version__}).')
+
+    def _update_check_failed(self, message, manual):
+        self.update_busy = False
+        if manual:
+            QMessageBox.warning(self, APP_NAME, f'Could not check for updates: {message}')
+
+    def _banner_clicked(self, i):
+        mode, version = self.banner_mode, self.update_version
+        if mode == 'ask':
+            self.banner.hide()
+            self.auto_update_act.setChecked(i == 0)    # also stores the choice
+            self.settings.setValue('check_updates', 'yes' if i == 0 else 'no')
+            if i == 0:
+                self.check_updates(manual=False)
+        elif mode == 'update':
+            if i == 0:
+                self.start_update()
+            elif i == 1:
+                open_external(updater.release_page(version))
+            else:
+                self.banner.hide()
+        elif mode == 'failed':
+            if i == 0:
+                open_external(updater.release_page(version))
+            self.banner.hide()
+
+    def start_update(self):
+        version, kind = self.update_version, updater.install_kind()
+        if kind not in ('installer', 'appimage'):
+            open_external(updater.release_page(version))
+            return
+        if self.worker:
+            QMessageBox.information(self, APP_NAME, 'Wait until the conversion has finished, then update.')
+            return
+        for b in self.banner_buttons:
+            b.setEnabled(False)
+        self.banner_label.setText(f'Downloading version {version}…')
+
+        def work():
+            last = [None]
+
+            def progress(done, total):
+                pct = done * 100 // total if total else -1
+                if pct != last[0]:
+                    last[0] = pct
+                    self.upd.progress.emit(pct)
+            try:
+                self.upd.ready.emit(updater.download(version, kind, progress))
+            except updater.UpdateError as e:
+                self.upd.download_failed.emit(str(e))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _update_progress(self, pct):
+        if self.banner_mode == 'update':
+            more = f' {pct}%' if pct >= 0 else ''
+            self.banner_label.setText(f'Downloading version {self.update_version}…{more}')
+
+    def _update_ready(self, path):
+        kind = updater.install_kind()
+        self.banner_label.setText(f'Installing version {self.update_version}; {APP_NAME} restarts by itself…')
+        QApplication.processEvents()
+        try:
+            updater.apply(path, kind, env=child_env())
+        except (OSError, updater.UpdateError) as e:
+            self._update_download_failed(str(e))
+            return
+        QTimer.singleShot(300, QApplication.quit)
+
+    def _update_download_failed(self, message):
+        self._show_banner('failed', f'The update did not work: {message}',
+                          ['Download it yourself…', 'Close'])
+
+    def _about(self):
+        QMessageBox.about(self, f'About {APP_NAME}', (
+            f'<h3>{APP_NAME} {sc.__version__}</h3>'
+            '<p>Makes Substance 3D Painter projects open in an older Painter release.</p>'
+            f'<p><a href="https://github.com/{updater.REPO}">github.com/{updater.REPO}</a><br>'
+            'MIT License.</p>'
+            '<p>Substance 3D Painter is a product of Adobe. This is an independent tool, '
+            'not affiliated with or endorsed by Adobe.</p>'))
 
     def closeEvent(self, e):
         if self.worker:
@@ -561,8 +756,13 @@ def self_test():
     numpy and mmh3.  Run with QT_QPA_PLATFORM=offscreen when there is no display.
     Returns the line to report; raises on failure."""
     app = QApplication.instance()
-    w = Window()
+    w = Window(check_updates=False)
     w.show()
+    # The update check needs TLS: make sure the bundle has it and its certificates load.
+    import ssl
+    ssl.create_default_context()
+    assert updater.version_tuple('v0.10.0') > updater.version_tuple('0.9.9') > updater.version_tuple('0.9')
+    assert updater.install_kind() in ('installer', 'appimage', 'portable', 'source')
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, 'not-a-project.spp')
         import h5py
@@ -581,7 +781,8 @@ def self_test():
     app.processEvents()
     return (f'{APP_NAME} {sc.__version__}: self-test ok '
             f'(Qt platform "{app.platformName()}", {w.target_box.count()} releases; '
-            f'{w.detect_label.text() or "no Painter detection on this system"})')
+            f'{w.detect_label.text() or "no Painter detection on this system"}; '
+            f'updates: {updater.install_kind()})')
 
 
 def report_self_test():
@@ -606,6 +807,15 @@ def main(argv=None):
     if '--version' in argv:
         if sys.stdout is not None:
             print(f'{APP_NAME} {sc.__version__}')
+        return 0
+    if '--check-update' in argv:
+        try:
+            latest = updater.latest_version()
+        except updater.UpdateError as e:
+            latest = f'unknown ({e})'
+        if sys.stdout is not None:
+            print(f'current {sc.__version__}, newest release {latest}, '
+                  f'this copy updates as: {updater.install_kind()}')
         return 0
     app = QApplication(sys.argv[:1])
     app.setOrganizationName('substance-version-tool')

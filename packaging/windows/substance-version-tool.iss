@@ -26,7 +26,8 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
+; commandline: the app's updater passes /CURRENTUSER or /ALLUSERS to match the existing install.
+PrivilegesRequiredOverridesAllowed=commandline dialog
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#OutputDir}
@@ -65,3 +66,19 @@ Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.spp\shell\Substance
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; After an update started from the app (updater.py runs this installer with /SILENT /RELAUNCH).
+Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; Check: CmdLineParamExists('/RELAUNCH')
+
+[Code]
+function CmdLineParamExists(const Value: String): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), Value) = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;

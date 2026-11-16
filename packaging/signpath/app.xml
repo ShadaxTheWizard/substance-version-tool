@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SignPath artifact configuration "app": paste into the SignPath project with this slug.
+     Input: the GitHub artifact "windows-app-unsigned" (the PyInstaller folder). Signs the
+     program; the installer is built from the signed folder and signed separately. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="Substance Version Tool/Substance Version Tool.exe">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>
