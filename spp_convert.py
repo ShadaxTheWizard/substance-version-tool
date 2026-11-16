@@ -8,8 +8,8 @@ not load.  This tool rewrites a project in the exact layout of the target releas
 
 * paint/document.bin and paint/default_material.bin are re-serialized with the target's
   class layouts (schemas.py).  Fields the target does not know are dropped; where the
-  representation changed (12.1/12.2: 128-bit channel masks, channel enums, polygon-fill
-  hits, single "sourceTransparent" objects) the old representation is rebuilt.
+  representation changed (12.1: 128-bit channel masks, channel enums, single
+  "sourceTransparent" objects; 12.2: polygon-fill hits) the old representation is rebuilt.
 * baking and viewer settings are rewritten in the target's layout when it is known.
 * projectsettings.ini gets the target's version stamp (and auto-UV settings block).
 * the texture cache is converted to the target's channel keys (or dropped).
@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sppformat as sf                                   # noqa: E402
 import schemas                                           # noqa: E402
 
-__version__ = '0.3.1'
+__version__ = '0.4.0'
 
 # ---------------------------------------------------------------------------
 # Painter releases and what each one reads
@@ -42,6 +42,7 @@ __version__ = '0.3.1'
 RELEASES = [(9, 0), (9, 1), (10, 0), (10, 1), (11, 0), (11, 1), (12, 0), (12, 1), (12, 2)]
 DEFAULT_TARGET = '12.0.1'
 NEWEST_DATA_VERSION = 92                       # 12.2
+WIDE_MASK_VERSION = 91                         # 12.1: first known with 128-bit channel masks
 OLDEST_DATA_VERSION = schemas.DOC_MIN_VERSION  # oldest layout this tool can write
 
 
@@ -60,8 +61,12 @@ PROFILES = {
     (10, 1): Profile(81, {'baking.ini': 20}, None, (3, 2)),
     (11, 0): Profile(82, {'baking.ini': 21, 'viewersettings2.ini': 27, 'iraysettings2.ini': 1,
                           'posteffects.ini': 7}, 6, (3, 2)),
+    (11, 1): Profile(88, {'baking.ini': 23, 'viewersettings2.ini': 29, 'iraysettings2.ini': 2,
+                          'posteffects.ini': 8}, 7, (3, 2)),
     (12, 0): Profile(89, {'baking.ini': 23, 'viewersettings2.ini': 29, 'iraysettings2.ini': 2,
                           'posteffects.ini': 9}, 7, (3, 2)),
+    (12, 1): Profile(91, {'baking.ini': 24, 'viewersettings2.ini': 30, 'iraysettings2.ini': 2,
+                          'posteffects.ini': 9}, 8, (3, 3)),
     (12, 2): Profile(92, {'baking.ini': 26, 'viewersettings2.ini': 31, 'iraysettings2.ini': 2,
                           'posteffects.ini': 9}, 8, (3, 3)),
 }
@@ -104,8 +109,9 @@ class Target:
                 raise ConversionError(f'--data-version must be between {OLDEST_DATA_VERSION} '
                                       f'and {schemas.DOC_BASE_VERSION}')
             p = self.profile
+            cache = p.cache if data_version >= p.doc else (3, 2) if data_version >= 81 else None
             self.profile = Profile(data_version, {}, p.anorigami if data_version >= p.doc else None,
-                                   p.cache if data_version >= 81 else None)
+                                   cache)
 
     def note(self):
         """One line on how sure the output format is, or None when it is the release's own."""
@@ -131,7 +137,7 @@ def default_target(data_version=None):
 # ---------------------------------------------------------------------------
 # Human-readable names for data the target release has no place for.
 DROPPED_DESCRIPTIONS = {
-    'DataMaterialStack.shaderModel': 'texture-set shader model (12.2 feature)',
+    'DataMaterialStack.shaderModel': 'texture-set shader model',
     'DataChannel.backgroundColor': 'custom channel background colour',
     'DataChannel.backgroundColorIsOverriden': 'custom channel background colour',
     'DataChannel.colorProfileOverride': 'per-channel colour profile override',
@@ -169,7 +175,7 @@ DROPPED_DESCRIPTIONS = {
     'DataDocument.usePhysicalSizeAsDefault': 'project option "use physical size by default"',
 }
 
-# 12.2 default values of 12.2-only fields: dropping these loses nothing.
+# Default values of fields added in 12.1 / 12.2: dropping these loses nothing.
 KNOWN_DEFAULTS = {
     'DataChannel.backgroundColor': np.array([1, 1, 1, 1], '<f4').tobytes(),
     'DataMaterialStack.shaderModel': struct.pack('<i', 3),
@@ -333,7 +339,8 @@ class DataConverter:
             # Not in the layout table: keep the layout, only downgrade field types.
             self.report.warn(f'{name} is not in the layout table for Painter '
                              f'{self.report.target.name}; kept as it is, which Painter may reject')
-            dst_fields = [(fn, 12 if ft == 22 else ft) for fn, ft in klass.fields]
+            wide = self.report.target.profile.doc >= WIDE_MASK_VERSION
+            dst_fields = [(fn, 12 if ft == 22 and not wide else ft) for fn, ft in klass.fields]
         out, consumed = {}, set()
         for fn, t_dst in dst_fields:
             where = f'{name}.{fn}'
@@ -601,9 +608,10 @@ def plan_texture_cache(f, drop, report):
     try:
         meta, entries = _cache_header_parse(bytes(tc['header'][()]))
         md = {k: v[2] for k, v in meta}
-        if (md.get('version'), md.get('version.minor')) == (3, 2):
-            return False                                  # already the old layout
-        if (md.get('version'), md.get('version.minor')) != (3, 3):
+        have = (md.get('version'), md.get('version.minor'))
+        if have == (3, 2) or have == report.target.profile.cache:
+            return False                                  # already the target's layout
+        if have != (3, 3):
             raise sf.FormatError(f'unknown texture-cache version {md}')
         new_meta = [(k, (t, n, 2 if k == 'version.minor' else v)) for k, (t, n, v) in meta]
         new_entries = []

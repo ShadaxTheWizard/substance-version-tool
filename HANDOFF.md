@@ -10,7 +10,7 @@ Shadax. Not affiliated with Adobe.
 
 | item | state |
 |---|---|
-| Latest release | **v0.3.1** (Windows installer + portable zip, Linux AppImage). 0.3.1 only exists to exercise the updater |
+| Latest release | **v0.4.0** (Windows installer + portable zip, Linux AppImage): 12.1 and 11.1 written in their own formats. 0.3.1 only existed to exercise the updater |
 | Windows app | 0.2.0 confirmed working on a real Windows PC (window, conversion). 0.3.0 installed there |
 | Auto-update | tested on Linux against real releases. **Windows silent update 0.3.0 → 0.3.1 not yet confirmed**: next thing to check |
 | Code signing | SignPath Foundation application submitted by the maintainer on 2026-11-16 (answers in "SignPath application" below); **awaiting their decision** (manual review, can take one to two weeks, can be refused). Everything on the repo side is in place but switched off |
@@ -193,8 +193,10 @@ valid signature with the same signer subject. Tested on Linux against real relea
 |---|---|
 | Converter (`spp_convert.py`) | targets 9.0 – 12.2. `--to VERSION`, default 12.0.1 (`SPP_TARGET_VERSION`) |
 | 12.2 → 12.0 | **confirmed in Painter 12.0.1**: two real 12.2 student projects opened and were autosaved by it. Baking and viewer settings are now converted too (they were silently lost before) |
+| → 12.1 | written as 12.1's own format (data version 91). Every class and settings layout in converted 12.2 projects matches real 12.1.0 / 12.1.2 / 12.1.5 saves (8 projects in `~/Documents/Development/spp-samples/`, not in the repo). **Never opened in an actual 12.1** |
+| → 11.1 | written as 11.1's own format (data version 88); the probe-derived layouts match a real 11.1.1 save exactly (46 classes). **Never opened in an actual 11.1** |
 | → 11.0 / 10.1 | layouts match real 11.0 / 10.1 projects exactly; outputs open in Painter 12.0.1 as "version 82 / 81" projects. **Never opened in an actual 11.x / 10.1** |
-| → 9.0 / 9.1 / 10.0 | written as data version 77, an estimate (see below). Outputs open in Painter 12.0.1. **Never opened in an actual 9.x / 10.0** |
+| → 9.0 / 9.1 / 10.0 | written as data version 77, an estimate (see below). Outputs open in Painter 12.0.1. **Very likely refused by an actual 9.x / 10.x: wrong binary encoding** (see "9.x / 10.x encoding" below) |
 | Install (`install.sh`) | run on the dev machine; `substance-version-tool` (+ `spp-convert`, `spp-downgrade` aliases), launcher, menu entry, MIME all active |
 | `.spp` association | resolves correctly via GIO and KDE (Dolphin). `xdg-mime query filetype` still says `application/x-hdf5`, because on niri it falls back to libmagic. That is harmless. |
 
@@ -203,16 +205,40 @@ valid signature with the same signer subject. Tested on Linux against real relea
 | release | document | baking.ini | viewersettings2.ini | iraysettings2.ini | posteffects.ini | source |
 |---|---|---|---|---|---|---|
 | 12.2.0 | 92 | 26 | 31 | 2 | 9 | student projects |
-| 12.1 | 90 or 91 | ? | ? | ? | ? | unknown; written as 12.0 |
+| 12.1.x | 91 | 24 | 30 | 2 | 9 | 12.1.0, 12.1.2, 12.1.5 projects (auto-UV block 8, texture cache 3.3 like 12.2) |
 | 12.0.x | 89 | 23 | 29 | 2 | 9 | samples shipped with 12.0.1 |
-| 11.1 | 83 – 88 | ? | ? | ? | ? | unknown; written as 11.0 |
+| 11.1.x | 88 | 23 | 29 | 2 | 8 | an 11.1.1 project (autosaves by 11.1.2) |
 | 11.0.0 | 82 | 21 | 27 | 1 | 7 | `automated_tests/resources/*.spp` in the 12.0.1 install |
 | 10.1.0 | 81 | 20 | 26 (`viewersettings.ini`) | 1 (`iraysettings.ini`) | ? | `automated_tests/resources/future_binary_data.spp` |
-| 10.0, 9.1, 9.0 | 77 – 81 | ? | ? | ? | ? | unknown; written as 77 |
+| 10.0 | 81 | 20 | 26 (`viewersettings.ini`) | 1 (`iraysettings.ini`) | 7 | Universal SPP's profiles (see below); written as 77 |
+| 9.1.2 | 80 | 20 | 26 (`viewersettings.ini`) | 1 (`iraysettings.ini`) | 7 | a 9.1.2 project; written as 77 |
+| 9.0 | 78 | 20 | 26 | 1 | 7 | Universal SPP's profiles; written as 77 |
 
 `substance-version-tool --check FILE` prints the release and document data version of any project.
 One project saved by a release marked unknown is enough to fill in its row
 (`PROFILES` in `spp_convert.py`).
+
+What 12.1 changed (from comparing 12.0, 12.1 and 12.2 projects class by class): 12.1
+already has everything 12.2 has except the polygon-fill changes (`DataActionDecal`
+sources / blending / opacity and the new `DataDecalHit*` fields). So 128-bit channel
+masks, channel enums, single `sourceTransparent` objects, the `DataChannel` additions and
+`DataMaterialStack.shaderModel` are all 12.1. Its table is `schemas.DOC_NEWER[91]`; the
+six classes no 12.1 project contained (`DOC_NEWER_ASSUMED`) take 12.0's layout with the
+type changes every seen class shows. Of those, only `DataActionClone` has a changed field,
+and its derived layout equals 12.2's.
+
+### 9.x / 10.x encoding
+
+Releases up to 10.x write the Data serializer in an older **"inline" encoding**: header
+word 0 instead of 1, every object tagged inline instead of a class table up front. A real
+9.1.2 project here has word 0, and [Universal SPP](https://github.com/Yeusepe/Universal-Painter-Files)
+(MIT; it diffs real 8.1 / 9.0 / 10.0 / 11.0 / 12.0 / 12.1 projects) writes inline for
+targets 10 and older. This tool writes word 1 for every target, which Painter 12.0.1 reads
+for any data version, so the 9.x / 10.x outputs were never really tested. The
+`future_binary_data.spp` used for 10.1 has header word 0xffffffff, so it is a 12.x test
+file rather than a 10.1 save; whether 10.1 itself is inline is unconfirmed. Fixing this
+means writing the inline encoding (Universal SPP's `_write_inline.py` shows it). Its
+profiles also give the data versions in the table above and an 8.1 = 70 boundary.
 
 Why 77 for 9.x / 10.0: the field timeline below has `strokes3D` (3D path strokes) appear
 in version 77, and paths are the headline feature of Painter 9.0, so 9.0 should be ≥ 77.
@@ -351,8 +377,9 @@ The launcher also sets `QT_SCALE_FACTOR`, preloads the eyedropper shim and adds
 1. **Linux launcher: detect the installed Painter.** `install.sh` bakes `PAINTER_VERSION`
    (default 12.0.1) into the launcher. It could parse `--version` (see the top section)
    and pass the result as `--to` instead.
-2. Get one project saved by each of 9.0, 9.1, 10.0, 11.1 and 12.1, run `--check` on it and
-   add the release to `PROFILES`. For 9.x / 10.0 that also settles the 77 estimate.
+2. **9.x / 10.x: write the inline encoding** (see "9.x / 10.x encoding"), then use the
+   known data versions (9.0 = 78, 9.1 = 80, 10.0 = 81) instead of 77. The 9.1.2 sample is
+   in `~/Documents/Development/spp-samples/9.1/`.
 3. Open a converted project in a real 11.x / 10.x / 9.x if one is ever at hand.
 4. One converted student project (→ 9.0) showed 2 of 414 fill effects under a different
    display name in Painter 12.0.1 ('Card Diamonds' instead of 'card_diamonds'). Cause not
@@ -360,7 +387,15 @@ The launcher also sets `QT_SCALE_FACTOR`, preloads the eyedropper shim and adds
 5. A project newer than data version 92 is refused unless `--force` is given. To support a
    newer Painter: add its changes as rules in `DataConverter` (compare its layouts with
    `schemas.DOC_89`), and if the installed Painter is newer too, re-run the probe so
-   `DOC_ADDED` covers the new base.
+   `DOC_ADDED` covers the new base. To make 12.2 a target then, run `dev/gen_schemas.py`
+   with 12.2 projects once `NEWEST_DATA_VERSION` is raised: it builds `DOC_NEWER[92]`.
+6. Settings blobs with no conversion: post-effects 9 → 8 / 7 (11.x targets) fails because
+   `DataPostEffectsParameters` points at older-style objects the newer blob does not have,
+   so 11.x uses its default post effects. `DataReferenceBinding` (seen in 12.1 projects)
+   has no known layout before 12.1 and is kept as it is, with a warning.
+7. `DataStroke3D` gained `stickyBackupPoints` / `stickyState` somewhere in 89 – 91, so its
+   12.0 layout is unknown (`DOC_OLDER_SEEN` holds its 11.1 layout). The 12.0.1 probe could
+   settle it.
 
 ## Dev notes
 
@@ -375,6 +410,11 @@ The launcher also sets `QT_SCALE_FACTOR`, preloads the eyedropper shim and adds
   $PY dev/probe_fields.py --out dev/added_fields_12.0.1.json A.spp B.spp ...   # version-89 projects
   $PY dev/gen_schemas.py dev/added_fields_12.0.1.json "$PAINTER_DIR/resources" more.spp ...
   ```
+
+  `gen_schemas.py` adds to what `schemas.py` already holds and stops when a project
+  disagrees with a recorded layout, so it only needs the projects that bring something new
+  (12.1 and 11.1 were added from `~/Documents/Development/spp-samples/`). A rerun with the
+  same inputs leaves `schemas.py` unchanged.
 
 * Do not put a pattern that matches your own shell's command line into `pkill -f` when
   scripting around the oracle; it kills the calling shell (exit code 144).

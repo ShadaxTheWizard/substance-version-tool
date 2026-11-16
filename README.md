@@ -96,9 +96,9 @@ The launcher's last conversion log is at `~/.cache/spp-downgrade/launch.log`.
 | target | written as | how sure |
 |---|---|---|
 | 12.2 | — | newest known format; nothing to convert |
-| 12.1 | 12.0 format | safe: 12.1 opens 12.0 projects. 12.1-only settings are dropped |
+| 12.1 | 12.1 format (data version 91) | format read from 12.1.0 – 12.1.5 projects; not tested in Painter 12.1 itself |
 | 12.0 | 12.0 format (data version 89) | format read from 12.0 projects; **converted files tested in Painter 12.0.1** |
-| 11.1 | 11.0 format | safe: 11.1 opens 11.0 projects. 11.1-only settings are dropped |
+| 11.1 | 11.1 format (data version 88) | format read from an 11.1 project; not tested in Painter 11.1 itself |
 | 11.0 | 11.0 format (data version 82) | format read from 11.0 projects; not tested in Painter 11.0 itself |
 | 10.1 | 10.1 format (data version 81) | format read from a 10.1 project; not tested in Painter 10.1 itself |
 | 10.0, 9.1, 9.0 | data version 77 | **best estimate** — see below |
@@ -110,10 +110,15 @@ newer version", retry with `--data-version 73` (the oldest layout the tool can w
 `substance-version-tool --check` on any project saved by one of these releases prints the number that
 would settle it.
 
-Only Painter 12.0.1 was available for testing. For the older targets, the layouts come from
-Painter 12.0.1's own upgrade code (see `HANDOFF.md`) and Painter 12.0.1 accepts every
-converted file as a genuine project of that age, but an actual 9.x / 10.x / 11.x install
-has never opened one.
+**Known problem with 9.x / 10.x:** a project saved by Painter 9.1 turned out to use an older
+binary encoding than 11.0 and later, and the tool writes the newer one for every target. So
+9.x and 10.x will most likely refuse the converted file, even though Painter 12.0.1 opens
+it. Until that is fixed, these targets are not expected to work.
+
+Only Painter 12.0.1 was available for testing. For 12.1 and 11.1, the layouts come from
+projects saved by those releases. For the older targets, they come from Painter 12.0.1's
+own upgrade code (see `HANDOFF.md`), and Painter 12.0.1 accepts every converted file as a
+genuine project of that age. No actual 9.x / 10.x / 11.x / 12.1 install has opened one.
 
 ## What changes in the copy
 
@@ -124,8 +129,10 @@ project actually used. The older the target, the longer that list can get:
 
 | not available before | what is dropped |
 |---|---|
-| 12.1 / 12.2 | texture-set shader model, polygon-fill blending / opacity / rectangle paint-through (fills become plain colour), channel description, background colour and colour-profile overrides |
-| 12.0 | warp-projection sticky points, fill-layer symmetry, layer-stack type |
+| 12.2 | polygon-fill blending / opacity / rectangle paint-through (fills become plain colour) |
+| 12.1 | texture-set shader model, channel description, background colour and colour-profile overrides |
+| 12.0 | warp-projection sticky points |
+| 11.1 | fill-layer symmetry, layer-stack type |
 | 11.0 | resolution override of procedural / text / vector sources |
 | 10.1 | text letter and line spacing |
 | 9.x / 10.0 (data version 77) | layer cache pins, the fill layers' UV-transfer channel, stroke / path names |
