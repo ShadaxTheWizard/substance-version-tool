@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Substance Version Tool
+GenericName=Painter project converter
+Comment=Make Substance 3D Painter projects open in an older Painter release
+Exec=substance-version-tool %F
+Icon=substance-version-tool
+Terminal=false
+Categories=Graphics;3DGraphics;
+StartupWMClass=substance-version-tool

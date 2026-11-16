@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.spp
+*.spp.tmp
+dev/*.cache
+dev/*.log
+build/
+dist/

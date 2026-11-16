@@ -1,0 +1,42 @@
+#!/bin/sh
+# Take a screenshot of the screen into the PNG file "$1" (used by the eyedropper
+# shim, see screengrab_shim.cpp). Exits non-zero if no screenshot could be taken.
+out="$1"
+[ -n "$out" ] || exit 2
+rm -f "$out"
+
+if command -v grim >/dev/null 2>&1; then
+    exec grim "$out"
+fi
+
+command -v niri >/dev/null 2>&1 || exit 1
+
+# niri's screenshot action also puts the image on the clipboard; keep a text
+# clipboard so that picking a colour does not wipe what was copied.
+saved=""
+if command -v wl-paste >/dev/null 2>&1 && command -v wl-copy >/dev/null 2>&1 \
+        && wl-paste -l 2>/dev/null | grep -q '^text/plain'; then
+    saved="$out.clip"
+    wl-paste -n >"$saved" 2>/dev/null || { rm -f "$saved"; saved=""; }
+fi
+
+niri msg action screenshot-screen --write-to-disk true --show-pointer false --path "$out" || exit 1
+
+# The file is written asynchronously: wait for the PNG end marker (up to 5 s).
+status=1
+i=0
+while [ "$i" -lt 100 ]; do
+    if [ -s "$out" ] && [ "$(tail -c 8 "$out" | od -An -tx1 | tr -d ' \n')" = "49454e44ae426082" ]; then
+        status=0
+        break
+    fi
+    sleep 0.05
+    i=$((i + 1))
+done
+
+if [ -n "$saved" ]; then
+    sleep 0.1
+    wl-copy <"$saved"
+    rm -f "$saved"
+fi
+exit $status

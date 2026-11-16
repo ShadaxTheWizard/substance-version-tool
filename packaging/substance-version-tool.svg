@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Substance Version Tool: a layer stack with a "down to an older version" badge -->
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="#1f2630"/>
+  <g stroke="#1f2630" stroke-width="6" stroke-linejoin="round">
+    <path d="M32 148 L112 114 L192 148 L112 182 Z" fill="#e8723a"/>
+    <path d="M32 116 L112 82 L192 116 L112 150 Z" fill="#8a96a8"/>
+    <path d="M32 84 L112 50 L192 84 L112 118 Z" fill="#d5dbe3"/>
+  </g>
+  <circle cx="188" cy="188" r="44" fill="#e8723a" stroke="#1f2630" stroke-width="8"/>
+  <path d="M188 162 V208 M168 190 L188 210 L208 190" fill="none" stroke="#ffffff"
+        stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

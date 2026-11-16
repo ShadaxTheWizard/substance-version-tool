@@ -1,0 +1,198 @@
+# Substance Version Tool
+
+Makes a Substance 3D Painter project open in an **older** Painter release — any release
+from **9.0 to 12.2**. Support for Substance 3D Designer is planned.
+
+Painter refuses a project saved by a newer release, and it checks the saved data strictly:
+one setting it does not know and the project fails to load. This tool writes a converted
+copy in the exact format of the release you name, `<name>_<version>.spp`, next to the
+original. The original is never modified.
+
+Going the other way needs no tool: a newer Painter opens an older project by itself.
+
+It comes two ways: an app with a window for Windows and Linux, and a Linux command-line
+tool (`substance-version-tool`) with a Painter launcher that converts on open.
+
+> Substance 3D Painter is a product of Adobe. This is an independent tool, not affiliated
+> with or endorsed by Adobe. It works from the project files alone and contains no Adobe code.
+
+## The app
+
+Download it from the [Releases](https://github.com/ShadaxTheWizard/substance-version-tool/releases) page.
+
+**Windows:** run `Substance_Version_Tool-<version>-windows-x64-setup.exe` (installs for your user, no
+admin rights needed, and can add *Convert with Substance Version Tool* to the right-click menu of
+`.spp` files), or unzip the portable `.zip` anywhere and run `Substance Version Tool.exe`. The builds
+are not code-signed yet, so SmartScreen may say "Windows protected your PC": choose
+*More info* → *Run anyway*.
+
+**Linux:** make `Substance_Version_Tool-<version>-x86_64.AppImage` executable and run it:
+
+```sh
+chmod +x Substance_Version_Tool-*-x86_64.AppImage
+./Substance_Version_Tool-*-x86_64.AppImage            # or pass .spp files to load them right away
+```
+
+It is one self-contained file (no Python needed) and runs on any 64-bit Linux with glibc
+2.34 or newer (Debian 12, Ubuntu 22.04, RHEL 9, Fedora 35 and later). Without FUSE, add
+`--appimage-extract-and-run`. AppImage managers (Gear Lever, AppImageLauncher) can add it
+to the app launcher.
+
+1. Drop `.spp` projects (or folders of them) on the window, or use *Add projects…*. Each
+   one shows the Painter release that saved it.
+2. Pick the Painter release they have to open in. On Linux the installed Painter is found
+   and preselected; on Windows pick it by hand for now.
+3. Press *Convert*. The copies are written next to each project, or into a folder you
+   choose, as `<name>_<version>.spp`; the report lists what the older release cannot store.
+
+Without the download, from a checkout: `pip install h5py numpy mmh3 PySide6-Essentials`,
+then `python3 substance_version_tool.py`.
+
+## Install
+
+Requires Linux, Python 3 and Painter (the launcher part assumes 12.0.x).
+
+```sh
+git clone https://github.com/ShadaxTheWizard/substance-version-tool.git
+cd substance-version-tool
+./install.sh        # or: PAINTER_DIR="/path/to/Substance 3D Painter" ./install.sh
+```
+
+This creates the `substance-version-tool` command (also available as `spp-convert` and
+`spp-downgrade`, its earlier names), a `substance-painter` launcher, an app-launcher
+entry with the Painter icon, and makes `.spp` files open in Painter on double-click.
+
+## Everyday use
+
+* **Double-click any `.spp`** (or open it from the app launcher's *Substance 3D Painter*).
+  Files newer than the installed Painter are converted automatically, and Painter opens
+  the copy. A converted copy is reused until the original changes.
+
+  The launcher converts for Painter **12.0.1**. After installing a different Painter,
+  re-run `PAINTER_VERSION=12.1 ./install.sh` (with `PAINTER_DIR=...` if it moved).
+* Command line:
+
+  ```sh
+  substance-version-tool student.spp                # -> student_12.0.1.spp (the default target)
+  substance-version-tool --to 11.0 student.spp      # -> student_11.0.spp
+  substance-version-tool --to 9 *.spp               # several at once, for Painter 9.0
+  substance-version-tool --check *.spp              # which Painter saved each file; does it need converting?
+  substance-version-tool --drop-cache student.spp   # if a converted file shows stale textures
+  ```
+
+  The default target is 12.0.1; set `SPP_TARGET_VERSION` to change it.
+
+The launcher's last conversion log is at `~/.cache/spp-downgrade/launch.log`.
+
+## Supported releases
+
+| target | written as | how sure |
+|---|---|---|
+| 12.2 | — | newest known format; nothing to convert |
+| 12.1 | 12.0 format | safe: 12.1 opens 12.0 projects. 12.1-only settings are dropped |
+| 12.0 | 12.0 format (data version 89) | format read from 12.0 projects; **converted files tested in Painter 12.0.1** |
+| 11.1 | 11.0 format | safe: 11.1 opens 11.0 projects. 11.1-only settings are dropped |
+| 11.0 | 11.0 format (data version 82) | format read from 11.0 projects; not tested in Painter 11.0 itself |
+| 10.1 | 10.1 format (data version 81) | format read from a 10.1 project; not tested in Painter 10.1 itself |
+| 10.0, 9.1, 9.0 | data version 77 | **best estimate** — see below |
+
+No project saved by 9.0, 9.1 or 10.0 was available, so their exact format numbers are
+unknown. Data version 77 is the one that introduced 3D path strokes, the headline feature
+of 9.0, so all three should accept it. If one of them says the project was "created with a
+newer version", retry with `--data-version 73` (the oldest layout the tool can write).
+`substance-version-tool --check` on any project saved by one of these releases prints the number that
+would settle it.
+
+Only Painter 12.0.1 was available for testing. For the older targets, the layouts come from
+Painter 12.0.1's own upgrade code (see `HANDOFF.md`) and Painter 12.0.1 accepts every
+converted file as a genuine project of that age, but an actual 9.x / 10.x / 11.x install
+has never opened one.
+
+## What changes in the copy
+
+Everything the target release can represent is carried over: layers, masks, fills,
+generators, filters, paint/erase/smudge/clone strokes, polygon fills, text, resources and
+bakes. Settings the target has no place for are dropped, and the tool lists the ones the
+project actually used. The older the target, the longer that list can get:
+
+| not available before | what is dropped |
+|---|---|
+| 12.1 / 12.2 | texture-set shader model, polygon-fill blending / opacity / rectangle paint-through (fills become plain colour), channel description, background colour and colour-profile overrides |
+| 12.0 | warp-projection sticky points, fill-layer symmetry, layer-stack type |
+| 11.0 | resolution override of procedural / text / vector sources |
+| 10.1 | text letter and line spacing |
+| 9.x / 10.0 (data version 77) | layer cache pins, the fill layers' UV-transfer channel, stroke / path names |
+
+Viewer, shader and baking settings are converted for 12.0 / 12.1 (and partly for 11.x).
+Where they cannot be, they are left as saved and Painter falls back to its defaults for them.
+
+A layer type that did not exist yet in the target release cannot be converted; Painter
+will refuse such a project.
+
+## Desktop fixes (Wayland / niri)
+
+Painter is an X11 program, so on Wayland it runs through XWayland. The `substance-painter`
+launcher works around three problems with that. They only apply when Painter is started
+through the launcher (app-launcher entry, double-click, or the command).
+
+* **Readable UI.** XWayland ignores the output scale, so Painter's interface comes out
+  tiny. The launcher scales it by niri's output scale. To choose a size yourself, set
+  `PAINTER_UI_SCALE=1.5` (any number) in `~/.config/substance-painter.conf`.
+* **Eyedropper.** Picking a colour from the screen used to show a black screen, because
+  Painter copies the (empty) X11 root window. A small preloaded library swaps that copy
+  for a real screenshot. Without `grim` installed the screenshot comes from niri and takes
+  about a second; `sudo dnf install grim` makes it quicker. Needs `g++` and
+  `qt6-qtbase-devel` at install time; set `PAINTER_EYEDROPPER_FIX=0` to turn it off.
+* **Keyboard navigation.** Press **`** (backtick), or use *Viewport > Keyboard Navigation*
+  or the arrows button in the plugin toolbar, to toggle keyboard camera controls for the 3D view:
+
+  | keys | action |
+  |---|---|
+  | arrows or W A S D | orbit |
+  | Shift + arrows or W A S D | pan |
+  | `+` / `-`, E / Q, PgDn / PgUp | zoom in / out |
+  | Home | frame the whole model |
+  | Ctrl + left / right or A / D | rotate the light (environment) |
+
+  While it is on, those keys do not reach Painter's own shortcuts and the shortcut-hint
+  popup that appears when holding Ctrl or Shift is hidden; typing in text fields still works. The toggle state is remembered. Speeds, the toggle key and the orbit
+  direction are constants at the top of `painter/startup/keyboard_nav.py`. The 2D view is
+  not affected (Painter has no scripting access to it).
+
+## Builds and releases
+
+GitHub Actions (`.github/workflows/build.yml`) builds the app for Linux
+(`packaging/build-linux.sh`, an AppImage) and Windows (`packaging/build-windows.sh`, an
+installer and a portable zip) on every push and pull request, with PyInstaller and the
+pinned, hashed dependencies in `packaging/requirements.txt`. Each build is started once
+headless as a self-test and kept on the run's page (*Artifacts*).
+
+To publish a release, bump `__version__` in `spp_convert.py`, commit, then tag and push:
+
+```sh
+git tag -a v0.2.0 -m "Substance Version Tool 0.2.0" && git push origin main v0.2.0
+```
+
+The tag build creates the GitHub release with every build and its `.sha256` attached, using
+the notes in `packaging/release-notes.md`. The build scripts also work by hand and leave
+their output in `dist/` (Linux needs `mksquashfs`; Windows needs Git Bash and Inno Setup 6).
+
+## Files
+
+| file | purpose |
+|---|---|
+| `spp_convert.py` | converter + CLI (`convert(src, dst, Target("11.0"))` is the entry point for other front ends) |
+| `substance_version_tool.py` | the Substance Version Tool app (PySide6) |
+| `packaging/` | app builds (`build-linux.sh`, `build-windows.sh`, `windows/substance-version-tool.iss`), pinned build requirements, icon, `.desktop` file, release notes |
+| `.github/workflows/build.yml` | CI: build, self-test and release the app |
+| `sppformat.py` | readers/writers for Painter's binary formats |
+| `schemas.py` | class layouts per data version (generated; see `dev/`) |
+| `install.sh` | (re)installs the CLI, launcher, menu entry and `.spp` association |
+| `painter/startup/keyboard_nav.py` | keyboard-navigation plugin, loaded by the launcher |
+| `painter/screengrab_shim.cpp`, `painter/painter-screengrab` | eyedropper fix (preloaded library and its screenshot helper) |
+| `dev/` | the scripts that produced `schemas.py` by probing a real Painter |
+| `HANDOFF.md` | format notes, verification status and open items for whoever picks this up next |
+
+## License
+
+MIT; see `LICENSE`.

@@ -1,0 +1,7 @@
+# What the app needs, plus the tool that bundles it. packaging/requirements.txt pins these
+# (and what they pull in) with hashes; see the comment at its top to regenerate it.
+h5py
+numpy
+mmh3
+PySide6-Essentials
+pyinstaller
