@@ -76,7 +76,10 @@ jobs:
           }
 
       - name: Build and self-test the app
-        run: packaging/build-windows.sh bundle
+        id: app
+        run: |
+          packaging/build-windows.sh bundle
+          echo "version=$(sed -n "s/^__version__ = '\(.*\)'$/\1/p" spp_convert.py)" >> "$GITHUB_OUTPUT"
 
       # --- signing the app (release tags with SignPath set up) ---
       - name: Upload the app for signing
@@ -99,6 +102,9 @@ jobs:
           artifact-configuration-slug: app
           github-artifact-id: ${{ steps.unsigned-app.outputs.artifact-id }}
           wait-for-completion-timeout-in-seconds: 7200
+          # Checked by the artifact configuration against the files' product version.
+          parameters: |
+            version: "${{ steps.app.outputs.version }}"
           output-artifact-directory: build/windows/signed-app
 
       - name: Use the signed app
@@ -137,6 +143,9 @@ jobs:
           artifact-configuration-slug: installer
           github-artifact-id: ${{ steps.unsigned-setup-artifact.outputs.artifact-id }}
           wait-for-completion-timeout-in-seconds: 7200
+          # Checked by the artifact configuration against the files' product version.
+          parameters: |
+            version: "${{ steps.app.outputs.version }}"
           output-artifact-directory: build/windows/signed-setup
 
       - name: Use the signed installer

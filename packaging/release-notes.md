@@ -24,4 +24,11 @@ Needs glibc 2.34 or newer (Ubuntu 22.04, Debian 12, Fedora 35, RHEL 9 and later)
 
 Each file has a `.sha256` next to it: `sha256sum -c <file>.sha256` (Linux) or `Get-FileHash <file>` (PowerShell) and compare.
 
+### Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org). See the [code signing policy](https://github.com/ShadaxTheWizard/substance-version-tool#code-signing-policy) and the [privacy policy](https://github.com/ShadaxTheWizard/substance-version-tool/blob/main/PRIVACY.md).
+<!-- unsigned -->
+The application to the SignPath Foundation is pending: the Windows files of this release are not signed yet.
+<!-- /unsigned -->
+
 Substance 3D Painter is a product of Adobe. Substance Version Tool is an independent tool and is not affiliated with or endorsed by Adobe.

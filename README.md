@@ -45,9 +45,10 @@ to the app launcher.
 3. Press *Convert*. The copies are written next to each project, or into a folder you
    choose, as `<name>_<version>.spp`; the report lists what the older release cannot store.
 
-**Updates.** On its first start the app asks whether it may check GitHub for a newer version
-each time it starts (*Help → Check for Updates at Start* changes that; *Help → Check for
-Updates…* checks once). When there is one, a bar offers to update: the installed Windows app
+**Updates.** The Windows installer offers to let the app check GitHub for a newer version
+each time it starts; the portable and Linux versions ask on their first start (*Help → Check
+for Updates at Start* changes that; *Help → Check for Updates…* checks once; see the
+[privacy policy](PRIVACY.md)). When there is one, a bar offers to update: the installed Windows app
 and the AppImage download it, check it, replace themselves and restart; the portable zip
 and a checkout open the release page instead.
 
@@ -185,32 +186,42 @@ their output in `dist/` (Linux needs `mksquashfs`; Windows needs Git Bash and In
 
 ## Code signing policy
 
-Windows release builds are signed with free code signing provided by
-[SignPath.io](https://about.signpath.io), certificate by
-[SignPath Foundation](https://signpath.org) (application pending: until it is approved, the
-Windows builds are unsigned).
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by
+[SignPath Foundation](https://signpath.org).
+
+> The application to the SignPath Foundation is pending. Until it is approved, the Windows
+> builds are not signed.
 
 * Committers and reviewers: [Shadax](https://github.com/ShadaxTheWizard)
 * Approvers: [Shadax](https://github.com/ShadaxTheWizard)
 
-Only the files attached to this repository's
-[GitHub releases](https://github.com/ShadaxTheWizard/substance-version-tool/releases) are
-signed. They are built by GitHub Actions from this repository's source
-(`.github/workflows/build.yml`), and every signing request is approved by hand.
+What is signed: the Windows program (`Substance Version Tool.exe`) and the Windows installer
+attached to this repository's
+[GitHub releases](https://github.com/ShadaxTheWizard/substance-version-tool/releases). They
+are built by GitHub Actions from this repository's source (`.github/workflows/build.yml`),
+never on a developer's machine, and every signing request is approved by hand. The
+open-source libraries bundled with the app (Python, Qt / PySide6, HDF5 / h5py, NumPy, mmh3)
+are shipped as their projects publish them and are not signed by this project.
 
-### Privacy
+Privacy: this program will not transfer any information to other networked systems unless
+specifically requested by the user or the person installing or operating it. The one such
+transfer, the optional update check against github.com, is described in the
+[privacy policy](PRIVACY.md).
 
-This program will not transfer any information to other networked systems unless
-specifically requested by the user or the person installing or operating it. Its only
-network access is the update check and download from github.com, which it does only after
-the user agreed to it on first start (or chose *Help → Check for Updates…*); the request
-carries nothing but the app's version in its User-Agent.
+## Uninstalling
+
+* Windows, installed: *Settings → Apps → Installed apps → Substance Version Tool →
+  Uninstall*. This also removes the app's settings and the right-click menu entry.
+* Windows, portable: delete the folder (settings: registry key
+  `HKEY_CURRENT_USER\Software\substance-version-tool`).
+* Linux: delete the AppImage (settings: `~/.config/substance-version-tool/`).
 
 ## Files
 
 | file | purpose |
 |---|---|
 | `spp_convert.py` | converter + CLI (`convert(src, dst, Target("11.0"))` is the entry point for other front ends) |
+| `PRIVACY.md` | privacy policy (the optional update check is the only network access) |
 | `updater.py` | update check, download and install (standard library only) |
 | `substance_version_tool.py` | the Substance Version Tool app (PySide6) |
 | `packaging/` | app builds (`build-linux.sh`, `build-windows.sh`, `windows/substance-version-tool.iss`), pinned build requirements, icon, `.desktop` file, release notes, SignPath artifact configurations (`signpath/`) |

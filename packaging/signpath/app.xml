@@ -1,11 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- SignPath artifact configuration "app": paste into the SignPath project with this slug.
+<!-- SignPath artifact configuration "app": paste into the SignPath project under this slug.
      Input: the GitHub artifact "windows-app-unsigned" (the PyInstaller folder). Signs the
-     program; the installer is built from the signed folder and signed separately. -->
+     program only; the bundled third-party libraries stay as their projects ship them.
+     The workflow passes the parameter "version" (from __version__ in spp_convert.py); the
+     product name and version in the program's version resource must match. -->
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
   <zip-file>
-    <pe-file path="Substance Version Tool/Substance Version Tool.exe">
-      <authenticode-sign />
-    </pe-file>
+    <directory path="Substance Version Tool">
+      <pe-file path="Substance Version Tool.exe"
+               product-name="Substance Version Tool" product-version="${version}">
+        <authenticode-sign />
+      </pe-file>
+    </directory>
   </zip-file>
 </artifact-configuration>

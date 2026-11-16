@@ -21,7 +21,15 @@ AppVerName={#AppName} {#AppVersion}
 AppPublisher=Shadax
 AppPublisherURL=https://github.com/ShadaxTheWizard/substance-version-tool
 AppSupportURL=https://github.com/ShadaxTheWizard/substance-version-tool/issues
+; The installer's own version resource. SignPath checks product name and version when signing.
 VersionInfoVersion={#AppVersion}
+VersionInfoProductName={#AppName}
+VersionInfoProductVersion={#AppVersion}
+VersionInfoProductTextVersion={#AppVersion}
+VersionInfoTextVersion={#AppVersion}
+VersionInfoCompany=Shadax
+VersionInfoDescription={#AppName} Setup
+VersionInfoCopyright=Copyright (c) 2026 Shadax. MIT License.
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
@@ -38,12 +46,15 @@ UninstallDisplayName={#AppName}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+; Shown before installing: what the app sends over the network (only the optional update check).
+InfoBeforeFile=privacy.txt
 CloseApplications=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
+Name: "updates"; Description: "Check GitHub for a new version when the app starts (see the privacy note)"; GroupDescription: "Updates:"
 Name: "contextmenu"; Description: "Add ""Convert with Substance Version Tool"" to the right-click menu of .spp files"; GroupDescription: "Explorer:"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
@@ -59,6 +70,12 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Registry]
+; The update-check choice, where the app reads it (QSettings). Only written if no choice was
+; made yet, so a later update does not undo a change made in the app's Help menu.
+Root: HKA; Subkey: "Software\substance-version-tool\{#AppName}"; ValueType: string; ValueName: "check_updates"; ValueData: "yes"; Flags: createvalueifdoesntexist; Tasks: updates
+Root: HKA; Subkey: "Software\substance-version-tool\{#AppName}"; ValueType: string; ValueName: "check_updates"; ValueData: "no"; Flags: createvalueifdoesntexist; Tasks: not updates
+; Uninstalling removes the app's settings as well.
+Root: HKA; Subkey: "Software\substance-version-tool"; Flags: uninsdeletekey
 ; SystemFileAssociations adds a verb without taking over the .spp file type.
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.spp\shell\SubstanceVersionTool"; ValueType: string; ValueName: ""; ValueData: "Convert with Substance Version Tool"; Flags: uninsdeletekey; Tasks: contextmenu
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.spp\shell\SubstanceVersionTool"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"",0"; Tasks: contextmenu

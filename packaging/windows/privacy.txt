@@ -1,0 +1,13 @@
+Privacy
+
+Substance Version Tool works only on the project files on this computer. It does not send
+anything anywhere, with one exception that you can turn off:
+
+Update check (the option "Check GitHub for a new version" on the next pages, and later
+Help > Check for Updates at Start in the app): each time the app starts, it asks github.com
+whether a newer version exists, and when you choose to update, it downloads it from there.
+The request carries nothing but the app's version. GitHub's privacy statement applies to it:
+https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement
+
+The full privacy policy:
+https://github.com/ShadaxTheWizard/substance-version-tool/blob/main/PRIVACY.md

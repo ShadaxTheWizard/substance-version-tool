@@ -83,8 +83,17 @@ repository has the settings below. Steps for the maintainer:
    "not signed yet" paragraph automatically, and a check step fails the build if a signature
    is not valid. Then remove "(application pending…)" from the README's policy section.
 
-The XML in `packaging/signpath/` follows SignPath's artifact-configuration format as far as it
-could be checked without an account: verify it in their editor when pasting.
+The XML in `packaging/signpath/` follows SignPath's documented artifact-configuration syntax
+(checked against docs.signpath.io, not yet against a live account): it signs only our files
+and enforces product name "Substance Version Tool" and product version = the `version`
+parameter, which the workflow passes from `__version__` (SignPath Foundation requires
+metadata restrictions). Their terms also require, and the repo has: the sentence "Free code
+signing provided by SignPath.io, certificate by SignPath Foundation." and the term "Code
+signing policy" on the home page (README) and the download page (release notes); roles;
+a privacy policy (`PRIVACY.md`, linking GitHub's for the update check) that the installer
+displays (`InfoBeforeFile`), with an installer option to turn the update check off;
+uninstall instructions. When approved, drop the "pending" notes in README and
+`packaging/release-notes.md` (the release job already removes the release-notes one).
 
 ### Updates
 
