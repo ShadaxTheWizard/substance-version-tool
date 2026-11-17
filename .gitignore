@@ -6,3 +6,9 @@ dev/*.cache
 dev/*.log
 build/
 dist/
+
+# Working notes and assistant files, kept local
+HANDOFF.md
+CLAUDE.md
+CLAUDE.local.md
+.claude/

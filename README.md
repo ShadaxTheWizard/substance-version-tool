@@ -129,7 +129,7 @@ Only Painter 12.0.1 was available for testing. For 12.1, 11.1 and 9.1 the layout
 projects saved by those releases. For 9.0 and 10.0 they come from the field lists of
 [Universal SPP](https://github.com/Yeusepe/Universal-Painter-Files), a separate MIT-licensed
 converter whose profiles were made from real 9.0 and 10.0 projects. The rest come from
-Painter 12.0.1's own upgrade code (see `HANDOFF.md`), and Painter 12.0.1 accepts every
+Painter 12.0.1's own upgrade code, and Painter 12.0.1 accepts every
 converted file as a genuine project of that age. No actual 9.x / 10.x / 11.x / 12.1 install
 has opened one.
 
@@ -261,7 +261,6 @@ transfer, the optional update check against github.com, is described in the
 | `painter/startup/keyboard_nav.py` | keyboard-navigation plugin, loaded by the launcher |
 | `painter/screengrab_shim.cpp`, `painter/painter-screengrab` | eyedropper fix (preloaded library and its screenshot helper) |
 | `dev/` | the scripts that produced `schemas.py` by probing a real Painter |
-| `HANDOFF.md` | format notes, verification status and open items for whoever picks this up next |
 
 ## License
 
