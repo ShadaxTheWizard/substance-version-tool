@@ -235,9 +235,10 @@ def newer_tables(doc, doc_base):
     Classes seen in projects of that version are taken as they are.  Every other class of
     DOC_89 gets the field type changes that the seen classes show consistently (the same
     field name and old type always becomes the same new type), and is listed in
-    DOC_NEWER_ASSUMED.  A class whose fields changed inconsistently, or that a project of
-    the newest version shows with a different layout, is left out, so the converter
-    warns instead of guessing."""
+    DOC_NEWER_ASSUMED.  A class whose fields changed inconsistently, that has a field of
+    a type every seen field of that type moved away from (the one-hot channel, 21, in 91)
+    under a name no seen class has, or that a project of the newest version shows with a
+    different layout, is left out, so the converter warns instead of guessing."""
     newest = sc.NEWEST_DATA_VERSION
     tables = {v: dict(t) for v, t in getattr(old, 'DOC_NEWER', {}).items()}
     assumed_old = {v: set(cs) for v, cs in getattr(old, 'DOC_NEWER_ASSUMED', {}).items()}
@@ -256,6 +257,8 @@ def newer_tables(doc, doc_base):
                 for fn, t in doc_base[c]:
                     if fn in new:
                         change[(fn, t)].add(new[fn])
+        kept = {t for (fn, t), to in change.items() if t in to}
+        retyped = {t for (fn, t) in change} - kept         # old types no seen field kept
         table, assumed = dict(seen), []
         for c, lay in doc_base.items():
             if c in seen:
@@ -263,7 +266,7 @@ def newer_tables(doc, doc_base):
             derived, ok = [], True
             for fn, t in lay:
                 to = change.get((fn, t), {t})
-                if len(to) != 1:
+                if len(to) != 1 or ((fn, t) not in change and t in retyped):
                     ok = False
                     break
                 derived.append((fn, next(iter(to))))
