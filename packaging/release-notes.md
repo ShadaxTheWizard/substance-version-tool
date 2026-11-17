@@ -18,6 +18,8 @@ chmod +x Substance_Version_Tool-{version}-x86_64.AppImage
 ./Substance_Version_Tool-{version}-x86_64.AppImage
 ```
 
+`--open FILE.spp` opens a project in the installed Painter and converts it first when a newer release saved it; the AppImage's `.desktop` entry runs it for `.spp` files.
+
 Needs glibc 2.34 or newer (Ubuntu 22.04, Debian 12, Fedora 35, RHEL 9 and later). Without FUSE, add `--appimage-extract-and-run`.
 
 ### Checking a download

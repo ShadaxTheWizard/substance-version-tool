@@ -914,6 +914,24 @@ def print_report(report, src, dst, out=sys.stdout):
         print(f'  ! {w}', file=out)
 
 
+def copy_for(path, target, drop_cache=False):
+    """The file a Painter of the target release can open for this project: (path, None)
+    when it opens as it is, else (converted copy, report).  The copy is <name>_<version>.spp
+    next to the project (in the cache folder when that is read-only) and is reused, with a
+    None report, until the project changes."""
+    if ProjectInfo(path).opens_in(target):
+        return path, None
+    dst = default_output(path, target)
+    if not os.access(os.path.dirname(os.path.abspath(path)), os.W_OK):
+        cache_dir = os.path.join(os.environ.get('XDG_CACHE_HOME', os.path.expanduser('~/.cache')),
+                                 'spp-downgrade')
+        os.makedirs(cache_dir, exist_ok=True)
+        dst = os.path.join(cache_dir, os.path.basename(dst))
+    if os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(path):
+        return dst, None
+    return dst, convert(path, dst, target, drop_cache=drop_cache)
+
+
 def cmd_launch(path, target, drop_cache):
     """For the desktop launcher: print the file Painter should open."""
     try:
@@ -923,17 +941,9 @@ def cmd_launch(path, target, drop_cache):
     except Exception:
         print(path)
         return 0
-    dst = default_output(path, target)
-    if not os.access(os.path.dirname(os.path.abspath(path)), os.W_OK):
-        cache_dir = os.path.join(os.environ.get('XDG_CACHE_HOME', os.path.expanduser('~/.cache')),
-                                 'spp-downgrade')
-        os.makedirs(cache_dir, exist_ok=True)
-        dst = os.path.join(cache_dir, os.path.basename(dst))
-    if os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(path):
-        print(dst)
-        return 0
-    report = convert(path, dst, target, drop_cache=drop_cache)
-    print_report(report, path, dst, out=sys.stderr)
+    dst, report = copy_for(path, target, drop_cache)
+    if report:
+        print_report(report, path, dst, out=sys.stderr)
     print(dst)
     return 0
 

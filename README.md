@@ -45,6 +45,21 @@ to the app launcher.
 3. Press *Convert*. The copies are written next to each project, or into a folder you
    choose, as `<name>_<version>.spp`; the report lists what the older release cannot store.
 
+**Opening in Painter (Linux).** `--open FILE.spp` starts the installed Painter with the
+project. A project saved by a newer release than that Painter is converted first and Painter
+opens the copy, `<name>_<version>.spp` next to the original; the copy is reused until the
+original changes. The AppImage's `.desktop` entry runs `--open` for `.spp` files, so with the
+tool as the default program for `.spp` a double-click does the same:
+
+```sh
+xdg-mime default substance-version-tool.desktop application/x-substance-painter-project
+```
+
+(The `.spp` MIME type has to exist; `install.sh` defines it.) No window appears unless the
+conversion takes a moment. Without an installed Painter, or when the conversion fails, the
+main window opens with the project listed. On Windows Painter is not detected yet, so
+`--open` always shows the window.
+
 **Updates.** The Windows installer offers to let the app check GitHub for a newer version
 each time it starts; the portable and Linux versions ask on their first start (*Help → Check
 for Updates at Start* changes that; *Help → Check for Updates…* checks once; see the

@@ -65,7 +65,12 @@ Pushing: this machine's SSH key is not on GitHub; push over HTTPS with
 `substance_version_tool.py` is a PySide6 window around `spp_convert.convert()`: a project list
 (drag and drop, shows the saving release), a target selector, output next to the project or
 in a folder, the texture-cache option, the report, and a Help menu (updates, About).
-Conversion runs in a `QThread`; the CLI is unchanged. `--self-test` (with
+Conversion runs in a `QThread`; the CLI is unchanged. `--open FILE.spp` (what the `.desktop`
+entry runs, with `MimeType` for `.spp`) skips the window: `Opener` finds the newest installed
+Painter, converts with `spp_convert.copy_for()` when the project is newer than it (same copy
+name and reuse rule as the launcher's `--launch`), and starts Painter with the result. It
+falls back to the window when no Painter is found or the conversion fails. Tested on Linux
+from a checkout against a stub Painter with 12.2 and 12.1 projects. `--self-test` (with
 `QT_QPA_PLATFORM=offscreen`) is what CI runs on each build; it reports on stdout and in
 `$SPP_SELFTEST_LOG`, and turns failures into exit code 1 (the Windows build has no console,
 and an uncaught exception there opens a dialog). `--check-update` prints the newest release

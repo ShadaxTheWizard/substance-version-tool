@@ -7,6 +7,8 @@ release they have to open in, and press Convert.  Each project is written as a n
 modified.  The conversion itself is spp_convert.convert(), the same code the CLI runs.
 
     substance-version-tool [FILE.spp ...]
+    substance-version-tool --open FILE.spp  # open in the installed Painter, converting first if
+                                            # a newer release saved it (what a double-click runs)
     substance-version-tool --version
     substance-version-tool --self-test      # for CI: checks the bundled libraries load, then exits
     substance-version-tool --check-update   # prints the newest release and how this copy updates
@@ -26,7 +28,8 @@ from PySide6.QtGui import (QAction, QDesktopServices, QFont, QFontDatabase, QIco
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
-    QPushButton, QRadioButton, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QProgressBar, QPushButton, QRadioButton, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+    QWidget,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -125,12 +128,123 @@ def open_external(target):
     QDesktopServices.openUrl(QUrl(target) if '://' in target else QUrl.fromLocalFile(target))
 
 
+def installed_painters():
+    """[(version, executable)] of the Painters found on this machine, newest first."""
+    found = [(v, exe) for exe in painter_executables() for v in [painter_version(exe)] if v]
+    return sorted(found, key=lambda p: tuple(map(int, p[0].split('.'))), reverse=True)
+
+
 class PainterDetector(QThread):
     found = Signal(list)       # ['12.0.1', ...], newest first
 
     def run(self):
-        versions = {v for v in map(painter_version, painter_executables()) if v}
-        self.found.emit(sorted(versions, key=lambda v: tuple(map(int, v.split('.'))), reverse=True))
+        versions = []
+        for v, _ in installed_painters():
+            if v not in versions:
+                versions.append(v)
+        self.found.emit(versions)
+
+
+# ---------------------------------------------------------------------------
+# Opening projects in the installed Painter (--open)
+# ---------------------------------------------------------------------------
+def notify(title, text):
+    """A desktop notification where notify-send exists; nothing elsewhere."""
+    try:
+        subprocess.Popen(['notify-send', '-a', APP_NAME, '-i', 'substance-version-tool', title, text],
+                         env=child_env(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        pass
+
+
+class Opener(QThread):
+    """Starts the newest installed Painter with each project.  A project saved by a newer
+    release than that Painter is converted first and Painter gets the copy
+    (sc.copy_for(): <name>_<version>.spp, reused until the project changes)."""
+    status = Signal(str)
+    finished_all = Signal(list)        # [(path, why it was not opened)]
+
+    def __init__(self, paths):
+        super().__init__()
+        self.paths = [os.path.abspath(p) for p in paths]
+
+    def run(self):
+        self.status.emit('Looking for an installed Painter…')
+        painters = installed_painters()
+        if not painters:
+            self.finished_all.emit([(p, 'no installed Painter found') for p in self.paths])
+            return
+        version, exe = painters[0]
+        try:
+            target = sc.Target(version)
+        except sc.ConversionError:
+            target = None              # a release without a format table: nothing to convert to
+        failed = []
+        for path in self.paths:
+            name, dst = os.path.basename(path), path
+            try:
+                info = sc.ProjectInfo(path)
+            except Exception:          # noqa: BLE001 - not a readable project: Painter decides
+                info = None
+            if info and target and not info.opens_in(target):
+                self.status.emit(f'Converting {name} for Painter {target.label}…')
+                try:
+                    dst, _ = sc.copy_for(path, target)
+                except Exception as e:     # noqa: BLE001 - reported in the window
+                    failed.append((path, str(e)))
+                    continue
+                notify('Opening converted copy',
+                       f'{name} was saved by Painter {info.saved_label()}.\n'
+                       f'Opening {os.path.basename(dst)} in Painter {version}.')
+            self.status.emit(f'Starting Painter {version}…')
+            try:
+                subprocess.Popen([exe, dst], cwd=os.path.dirname(exe), env=child_env(),
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, start_new_session=True)
+            except OSError as e:
+                failed.append((path, f'could not start Painter: {e}'))
+        self.finished_all.emit(failed)
+
+
+def open_projects(app, paths):
+    """--open: no window unless the work takes a moment (then a progress note) or a project
+    could not be opened (then the main window, with those projects listed)."""
+    note = QWidget()
+    note.setWindowTitle(APP_NAME)
+    box = QVBoxLayout(note)
+    label = QLabel()
+    label.setMinimumWidth(420)
+    box.addWidget(label)
+    bar = QProgressBar()
+    bar.setRange(0, 0)
+    box.addWidget(bar)
+    delay = QTimer()
+    delay.setSingleShot(True)
+    delay.timeout.connect(note.show)
+    delay.start(500)
+    kept = []
+
+    def finished(failed):
+        delay.stop()
+        if not failed:
+            app.quit()
+            return
+        w = Window()
+        kept.append(w)
+        w.show()
+        note.close()
+        w.add_paths([p for p, _ in failed])
+        w.report.setPlainText(''.join(f'{p}\n  not opened: {why}\n' for p, why in failed))
+        w.status.setText('Not opened in Painter; see the report.')
+
+    opener = Opener(paths)
+    opener.status.connect(label.setText)
+    opener.finished_all.connect(finished)
+    opener.start()
+    rc = app.exec()
+    opener.wait()
+    return rc
 
 
 # ---------------------------------------------------------------------------
@@ -831,9 +945,11 @@ def main(argv=None):
             break
     if '--self-test' in argv:
         return report_self_test()
+    files = [a for a in argv if not a.startswith('-')]
+    if '--open' in argv and files:
+        return open_projects(app, files)
     w = Window()
     w.show()
-    files = [a for a in argv if not a.startswith('-')]
     if files:
         QTimer.singleShot(0, lambda: w.add_paths(files))
     return app.exec()
