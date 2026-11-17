@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sppformat as sf                                   # noqa: E402
 import schemas                                           # noqa: E402
 
-__version__ = '0.5.0'
+__version__ = '0.6.0'
 
 # ---------------------------------------------------------------------------
 # Painter releases and what each one reads
@@ -713,6 +713,43 @@ def plan_texture_cache(f, drop, report):
 
 
 # ---------------------------------------------------------------------------
+# Shaders
+# ---------------------------------------------------------------------------
+# A project carries the source of its shader (resources/<id>.shader), and Painter compiles
+# that copy against its own shader library.  A function the library renamed makes a newer
+# project's shader fail to compile in an older Painter, which then shows the model pink.
+# {first release with the new name: {new name: name before}}.  The 12.1 entry comes from
+# comparing the asm-metal-rough shader in 12.0 and 12.1 / 12.2 projects: same arguments.
+SHADER_RENAMED = {(12, 1): {b'pbrComputeF0': b'iorToSpecularLevel'}}
+# Shaders that first shipped with a release: {release: {resource name: display name}}.
+SHADER_ADDED = {(12, 1): {b'open-pbr': 'OpenPBR'}}
+
+
+def convert_shader(blob, report):
+    """The shader source with library calls renamed for the target, or None if unchanged."""
+    out = blob
+    for release, names in SHADER_RENAMED.items():
+        if report.target.release < release:
+            for new, old in names.items():
+                out = re.sub(rb'\b' + new + rb'\b', old, out)
+    if out == blob:
+        return None
+    report.info.append(f"shader adapted to Painter {report.target.name}'s shader library")
+    return out
+
+
+def check_shader_refs(blob, report):
+    """Warn about a shader the target release does not ship."""
+    for release, names in SHADER_ADDED.items():
+        if report.target.release < release:
+            for res, label in names.items():
+                if re.search(rb'resource://[^?\x00]*/' + res + rb'\?', blob):
+                    report.warn(f'The project uses the {label} shader, which Painter '
+                                f'{report.target.name} does not have; the model shows pink until '
+                                f'another shader is chosen in the shader settings.')
+
+
+# ---------------------------------------------------------------------------
 # HDF5 container
 # ---------------------------------------------------------------------------
 def _put(dst, path, data):
@@ -793,10 +830,18 @@ def convert(src, dst, target=None, drop_cache=False, force=False):
                 return
             if obj.dtype != np.uint8 or obj.ndim != 1 or obj.shape[0] < 20:
                 return
+            if (name.startswith('resources/') and name.endswith('.shader')
+                    and not name.startswith('resources/.alg_meta/')):
+                out = convert_shader(bytes(obj[()]), report)
+                if out is not None:
+                    replaced[name] = out
+                return
             if bytes(obj[:4]) != sf.MAGIC:
                 return
             base = name.rpartition('/')[2]
             if name.startswith(('editor/', 'baking/')):
+                if base.startswith('viewersettings'):
+                    check_shader_refs(bytes(obj[()]), report)
                 res = convert_aux(bytes(obj[()]), base, report)
                 if res is False:
                     removed.add(name)

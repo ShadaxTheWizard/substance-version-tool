@@ -162,6 +162,12 @@ Two gaps for 9.x / 10.x: 3D path strokes (paths) are kept in today's layout, whi
 releases may reject (the tool warns when a project has any), and resources such as export
 presets stay in the newer format (also with a warning).
 
+A project carries the source of its shader, which the older Painter compiles against its
+own shader library. For targets before 12.1 the tool renames the one library function that
+12.1 renamed (`pbrComputeF0`, before that `iorToSpecularLevel`); without that the model shows
+pink. A project using the OpenPBR shader (new in 12.1) stays pink in an older Painter until
+another shader is chosen; the tool warns about it.
+
 A layer type that did not exist yet in the target release cannot be converted; Painter
 will refuse such a project.
 
