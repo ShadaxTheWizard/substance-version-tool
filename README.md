@@ -20,10 +20,13 @@ tool (`substance-version-tool`) with a Painter launcher that converts on open.
 
 Download it from the [Releases](https://github.com/ShadaxTheWizard/substance-version-tool/releases) page.
 
+> The repository is private since 2026-11-17. The Releases page, and the update check of
+> installed copies, only work for accounts with access to it.
+
 **Windows:** run `Substance_Version_Tool-<version>-windows-x64-setup.exe` (installs for your user, no
 admin rights needed, and can add *Convert with Substance Version Tool* to the right-click menu of
 `.spp` files), or unzip the portable `.zip` anywhere and run `Substance Version Tool.exe`.
-Until code signing is in place (see [Code signing policy](#code-signing-policy)), SmartScreen
+The builds are not signed (see [Code signing policy](#code-signing-policy)), so SmartScreen
 may say "Windows protected your PC": choose *More info* → *Run anyway*.
 
 **Linux:** make `Substance_Version_Tool-<version>-x86_64.AppImage` executable and run it:
@@ -171,7 +174,7 @@ another shader is chosen; the tool warns about it.
 A layer type that did not exist yet in the target release cannot be converted; Painter
 will refuse such a project.
 
-## Desktop fixes (Wayland / niri)
+## Desktop fixes (Wayland: niri, KDE Plasma, wlroots)
 
 Painter is an X11 program, so on Wayland it runs through XWayland. The `substance-painter`
 launcher works around three problems with that. They only apply when Painter is started
@@ -182,9 +185,14 @@ through the launcher (app-launcher entry, double-click, or the command).
   `PAINTER_UI_SCALE=1.5` (any number) in `~/.config/substance-painter.conf`.
 * **Eyedropper.** Picking a colour from the screen used to show a black screen, because
   Painter copies the (empty) X11 root window. A small preloaded library swaps that copy
-  for a real screenshot. Without `grim` installed the screenshot comes from niri and takes
-  about a second; `sudo dnf install grim` makes it quicker. Needs `g++` and
-  `qt6-qtbase-devel` at install time; set `PAINTER_EYEDROPPER_FIX=0` to turn it off.
+  for a real screenshot of each screen. It also makes Painter's per-screen pick overlays
+  unmanaged windows: as managed full-screen windows, KWin stacks two of them on one
+  monitor when there are several, and the picker flickers. Several monitors with
+  different scales work. The screenshot comes from KWin on KDE Plasma (native pixels, a
+  few hundredths of a second), from `grim` where the compositor supports it, and
+  otherwise from niri (about a second; `sudo dnf install grim` makes it quicker). Needs
+  `g++` and `qt6-qtbase-devel` at install time; set `PAINTER_EYEDROPPER_FIX=0` to turn
+  it off.
 * **Keyboard navigation.** Press **`** (backtick), or use *Viewport > Keyboard Navigation*
   or the arrows button in the plugin toolbar, to toggle keyboard camera controls for the 3D view:
 
@@ -224,8 +232,9 @@ their output in `dist/` (Linux needs `mksquashfs`; Windows needs Git Bash and In
 Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by
 [SignPath Foundation](https://signpath.org).
 
-> The application to the SignPath Foundation is pending. Until it is approved, the Windows
-> builds are not signed.
+> The Windows builds are not signed. The SignPath Foundation signs public open-source
+> projects only, so signing stays switched off while the repository is private. The policy
+> below describes the setup that is prepared for it.
 
 * Committers and reviewers: [Shadax](https://github.com/ShadaxTheWizard)
 * Approvers: [Shadax](https://github.com/ShadaxTheWizard)
@@ -265,7 +274,7 @@ transfer, the optional update check against github.com, is described in the
 | `schemas.py` | class layouts per data version (generated; see `dev/`) |
 | `install.sh` | (re)installs the CLI, launcher, menu entry and `.spp` association |
 | `painter/startup/keyboard_nav.py` | keyboard-navigation plugin, loaded by the launcher |
-| `painter/screengrab_shim.cpp`, `painter/painter-screengrab` | eyedropper fix (preloaded library and its screenshot helper) |
+| `painter/screengrab_shim.cpp`, `painter/painter-screengrab`, `painter/kwin_screengrab.cpp` | eyedropper fix (preloaded library, its screenshot helper, and the KWin screenshot program the helper uses on KDE) |
 | `dev/` | the scripts that produced `schemas.py` by probing a real Painter |
 
 ## License

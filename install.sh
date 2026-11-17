@@ -19,6 +19,7 @@ DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 BIN="$HOME/.local/bin"
 VENV="$DATA/spp-downgrade/venv"
 SHIM="$DATA/spp-downgrade/libpainter-screengrab.so"
+KWIN_GRAB="$DATA/spp-downgrade/painter-kwin-screengrab"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/substance-painter.conf"
 APP_ID="adobe-substance-3d-painter"
 MIME="application/x-substance-painter-project"
@@ -43,12 +44,29 @@ ln -sf substance-version-tool "$BIN/spp-convert"
 ln -sf substance-version-tool "$BIN/spp-downgrade"
 
 echo "* eyedropper fix ($SHIM)"
-if command -v g++ >/dev/null && pkg-config --exists Qt6Gui 2>/dev/null; then
-    g++ -shared -fPIC -O2 -std=c++17 $(pkg-config --cflags Qt6Gui) \
+if command -v g++ >/dev/null && pkg-config --exists Qt6Widgets 2>/dev/null; then
+    g++ -shared -fPIC -O2 -std=c++17 $(pkg-config --cflags Qt6Widgets) \
         -o "$SHIM" "$HERE/painter/screengrab_shim.cpp" -ldl
 else
     rm -f "$SHIM"
     echo "  skipped: needs g++ and the Qt 6 headers (Fedora: sudo dnf install gcc-c++ qt6-qtbase-devel)"
+fi
+
+# KDE Plasma: the screenshot comes from KWin, which only serves programs that a
+# .desktop file authorises for its screenshot interface.
+rm -f "$KWIN_GRAB" "$DATA/applications/painter-kwin-screengrab.desktop"
+if [ -f "$SHIM" ] && command -v kwin_wayland >/dev/null && pkg-config --exists Qt6DBus 2>/dev/null; then
+    echo "* KWin screenshot helper ($KWIN_GRAB)"
+    g++ -O2 -std=c++17 -fPIC $(pkg-config --cflags --libs Qt6DBus Qt6Gui) \
+        -o "$KWIN_GRAB" "$HERE/painter/kwin_screengrab.cpp"
+    cat > "$DATA/applications/painter-kwin-screengrab.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Substance 3D Painter eyedropper screenshot helper
+Exec=$KWIN_GRAB
+NoDisplay=true
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
+EOF
 fi
 
 if [ ! -e "$CONF" ]; then
@@ -56,8 +74,9 @@ if [ ! -e "$CONF" ]; then
     cat > "$CONF" <<'CONF_EOF'
 # Settings for the substance-painter launcher (a shell fragment).
 
-# Size of Painter's interface. "auto" follows the compositor's output scale
-# (niri); or give a number, e.g. 1.5 for a larger UI, 1 for Painter's native size.
+# Size of Painter's interface. "auto" follows niri's output scale and leaves the
+# size alone elsewhere (KDE scales XWayland programs itself); or give a number,
+# e.g. 1.5 for a larger UI, 1 for Painter's native size.
 #PAINTER_UI_SCALE=auto
 
 # Set to 0 to turn off the eyedropper (screen colour picker) fix.
@@ -112,9 +131,11 @@ fi
 # Keyboard-navigation plugin (painter/startup/keyboard_nav.py).
 export SUBSTANCE_PAINTER_PLUGINS_PATH="$HERE/painter\${SUBSTANCE_PAINTER_PLUGINS_PATH:+:\$SUBSTANCE_PAINTER_PLUGINS_PATH}"
 
-# Eyedropper: replace Painter's (black) X11 screen grab with a real screenshot.
+# Eyedropper: replace Painter's (black) X11 screen grab with a real screenshot,
+# and keep its per-screen pick overlays on their own monitors.
 if [[ -n "\${WAYLAND_DISPLAY:-}" && -f "$SHIM" && "\${PAINTER_EYEDROPPER_FIX:-1}" != 0 ]]; then
     export PAINTER_SCREENGRAB_HELPER="$HERE/painter/painter-screengrab"
+    export PAINTER_KWIN_SCREENGRAB="$KWIN_GRAB"
     export LD_PRELOAD="$SHIM\${LD_PRELOAD:+:\$LD_PRELOAD}"
 fi
 

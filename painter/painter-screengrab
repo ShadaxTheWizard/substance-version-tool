@@ -1,13 +1,28 @@
 #!/bin/sh
-# Take a screenshot of the screen into the PNG file "$1" (used by the eyedropper
-# shim, see screengrab_shim.cpp). Exits non-zero if no screenshot could be taken.
+# Take a screenshot into the file "$1" (used by the eyedropper shim, see
+# screengrab_shim.cpp). "$2" names the screen (output) wanted, e.g. DP-1. The
+# image shows that screen or, where only that is on offer, the whole desktop;
+# the shim tells the two apart. Any format Qt reads from the content will do
+# (PNG, PPM); the file name is not a guide to it. Exits non-zero if no
+# screenshot could be taken.
 out="$1"
+screen="${2:-}"
 [ -n "$out" ] || exit 2
 rm -f "$out"
 
-if command -v grim >/dev/null 2>&1; then
-    exec grim "$out"
+# KDE Plasma: the one output, in its native pixels, straight from KWin
+# (kwin_screengrab.cpp; install.sh builds and registers it).
+if [ -n "$screen" ] && [ -x "${PAINTER_KWIN_SCREENGRAB:-}" ] \
+        && "$PAINTER_KWIN_SCREENGRAB" "$out" "$screen" 2>/dev/null && [ -s "$out" ]; then
+    exit 0
 fi
+rm -f "$out"
+
+# wlroots compositors (and niri builds with screencopy): the whole desktop.
+if command -v grim >/dev/null 2>&1 && grim -t ppm "$out" 2>/dev/null && [ -s "$out" ]; then
+    exit 0
+fi
+rm -f "$out"
 
 command -v niri >/dev/null 2>&1 || exit 1
 
