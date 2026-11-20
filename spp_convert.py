@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sppformat as sf                                   # noqa: E402
 import schemas                                           # noqa: E402
 
-__version__ = '0.6.1'
+__version__ = '0.6.2'
 
 # ---------------------------------------------------------------------------
 # Painter releases and what each one reads
@@ -406,6 +406,42 @@ class DataConverter:
             return None
         return NotImplemented
 
+    def _replaced_shader(self, values):
+        """(label of the shader the target lacks, URL of the target's default shader) for a
+        viewer ShaderData on such a shader, else None."""
+        label = shader_added(values.get('shaderUrl', b''), self.report.target)
+        if label is None:
+            return None
+        url = self.defaults.get('ShaderData.shaderUrl', b'')
+        if not re.match(rb'resource://[^?\x00]*/' + DEFAULT_SHADER + rb'\?', url):
+            raise Unconvertible(f'no {DEFAULT_SHADER_LABEL} shader URL is known for the target')
+        return label, url
+
+    def _rule_ShaderData_shaderUrl(self, values, consumed):
+        r = self._replaced_shader(values)
+        if r is None:
+            return NotImplemented
+        consumed.add('shaderUrl')
+        msg = (f'{r[0]} shader replaced by {DEFAULT_SHADER_LABEL}, the default shader of '
+               f'Painter {self.report.target.name}')
+        if msg not in self.report.info:
+            self.report.info.append(msg)
+        return r[1]
+
+    def _rule_ShaderData_tweaks(self, values, consumed):
+        r = self._replaced_shader(values)
+        if r is None:
+            return NotImplemented
+        consumed.add('tweaks')
+        known = DEFAULT_SHADER_TWEAKS.get(self.report.target.profile.aux.get('viewersettings2.ini'), set())
+        kept = []
+        for t in values.get('tweaks') or []:
+            if t is not None and (bytes(t.values.get('identifier', b'')), t.klass.name) in known:
+                kept.append(self.obj(t))
+            else:
+                self.report.dropped[f'{r[0]} shader settings'] += 1
+        return kept
+
     def _rule_DataChannel_userIsColorManaged(self, values, consumed):
         if 'userIsColor' in values:
             consumed.add('userIsColor')
@@ -722,7 +758,47 @@ def plan_texture_cache(f, drop, report):
 # comparing the asm-metal-rough shader in 12.0 and 12.1 / 12.2 projects: same arguments.
 SHADER_RENAMED = {(12, 1): {b'pbrComputeF0': b'iorToSpecularLevel'}}
 # Shaders that first shipped with a release: {release: {resource name: display name}}.
+# The viewer settings of an older target get that release's default shader instead.  A
+# 12.1 / 12.2 project on OpenPBR otherwise fails to compile in 12.0.1, which then loses the
+# GPU device ("GPU Device lost: driver crash or TDR") and usually crashes.
 SHADER_ADDED = {(12, 1): {b'open-pbr': 'OpenPBR'}}
+# The default shader of 9.0 - 12.0 ("ASM - PBR Metallic Roughness" template).  Its URL for a
+# target is the ShaderData.shaderUrl recorded from that release's projects
+# (schemas.AUX_DEFAULTS), since the version hash in it differs from release to release.
+DEFAULT_SHADER = b'asm-metal-rough'
+DEFAULT_SHADER_LABEL = 'ASM PBR Metallic Roughness'
+# Settings of asm-metal-rough as Painter 12.0.1 stores them (identifier, tweak class), from its
+# own samples and template (viewer settings version 29).  A replaced shader keeps the ones it
+# shares with them; for older viewer settings the parameter list is unknown, so none are kept.
+DEFAULT_SHADER_TWEAKS = {29: {
+    (b'absorptionEnabled', 'DataTweakBool'), (b'alphaBlendEnabled', 'DataTweakBool'),
+    (b'alpha_test_dither', 'DataTweakBool'), (b'alpha_test_enabled', 'DataTweakBool'),
+    (b'alpha_test_threshold', 'DataTweakFloat'), (b'anisotropyEnabled', 'DataTweakBool'),
+    (b'ao_intensity', 'DataTweakFloat'), (b'bent_normal_diffuse_amount', 'DataTweakFloat'),
+    (b'bent_normal_specular_amount', 'DataTweakFloat'), (b'coatEnabled', 'DataTweakBool'),
+    (b'coatIoR', 'DataTweakFloat'), (b'doubleSided', 'DataTweakBool'),
+    (b'emissive_intensity', 'DataTweakFloat'), (b'horizonFade', 'DataTweakFloat'),
+    (b'maxPOMSamples', 'DataTweakInt'), (b'minPOMSamples', 'DataTweakInt'),
+    (b'nbSamples', 'DataTweakInt'), (b'pomStrength', 'DataTweakFloat'),
+    (b'sheenEnabled', 'DataTweakBool'), (b'specularEdgeColorEnabled', 'DataTweakBool'),
+    (b'specularIoR', 'DataTweakFloat'), (b'sssColor', 'DataTweakFloat3'),
+    (b'sssEnabled', 'DataTweakBool'), (b'sssRayleigh', 'DataTweakFloat'),
+    (b'sssRedShift', 'DataTweakFloat'), (b'sssScale', 'DataTweakFloat'),
+    (b'sssScatteringColorSource', 'DataTweakInt'),
+    (b'sssScatteringUsesTranslucency', 'DataTweakBool'), (b'sssType', 'DataTweakInt'),
+    (b'translucencyEnabled', 'DataTweakBool'), (b'usePOM', 'DataTweakBool'),
+    (b'use_bent_normal', 'DataTweakBool')}}
+
+
+def shader_added(url, target):
+    """Display name of the shader a resource URL names when the target release does not ship
+    it, else None."""
+    for release, names in SHADER_ADDED.items():
+        if target.release < release:
+            for res, label in names.items():
+                if re.match(rb'resource://[^?\x00]*/' + re.escape(res) + rb'(\?|$)', bytes(url)):
+                    return label
+    return None
 
 
 def convert_shader(blob, report):
@@ -739,14 +815,14 @@ def convert_shader(blob, report):
 
 
 def check_shader_refs(blob, report):
-    """Warn about a shader the target release does not ship."""
-    for release, names in SHADER_ADDED.items():
-        if report.target.release < release:
-            for res, label in names.items():
-                if re.search(rb'resource://[^?\x00]*/' + res + rb'\?', blob):
-                    report.warn(f'The project uses the {label} shader, which Painter '
-                                f'{report.target.name} does not have; the model shows pink until '
-                                f'another shader is chosen in the shader settings.')
+    """Warn about a shader the target release does not ship that is still referenced by
+    the viewer settings as written (a conversion replaces it)."""
+    for url in re.findall(rb'resource://[^\x00]*?\.shader', blob):
+        label = shader_added(url, report.target)
+        if label:
+            report.warn(f'The viewer settings still use the {label} shader, which Painter '
+                        f'{report.target.name} does not have; choose another shader in the '
+                        f'shader settings.')
 
 
 # ---------------------------------------------------------------------------
@@ -840,9 +916,9 @@ def convert(src, dst, target=None, drop_cache=False, force=False):
                 return
             base = name.rpartition('/')[2]
             if name.startswith(('editor/', 'baking/')):
-                if base.startswith('viewersettings'):
-                    check_shader_refs(bytes(obj[()]), report)
                 res = convert_aux(bytes(obj[()]), base, report)
+                if base.startswith('viewersettings') and isinstance(res, tuple):
+                    check_shader_refs(res[1], report)
                 if res is False:
                     removed.add(name)
                 elif res is not None:

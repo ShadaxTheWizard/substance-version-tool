@@ -168,11 +168,37 @@ presets stay in the newer format (also with a warning).
 A project carries the source of its shader, which the older Painter compiles against its
 own shader library. For targets before 12.1 the tool renames the one library function that
 12.1 renamed (`pbrComputeF0`, before that `iorToSpecularLevel`); without that the model shows
-pink. A project using the OpenPBR shader (new in 12.1) stays pink in an older Painter until
-another shader is chosen; the tool warns about it.
+pink. The OpenPBR shader (new in 12.1) does not exist before 12.1, and Painter 12.0.1 does
+not show such a project pink: the shader fails to compile, the GPU device is lost ("GPU
+Device lost: driver crash or TDR") and Painter usually crashes. For targets before 12.1 the
+tool therefore switches OpenPBR to the target's default shader, ASM PBR Metallic Roughness
+(`asm-metal-rough`), using the shader URL recorded from that release's own projects. For
+12.0 and 11.1 the shader settings the two shaders share (ambient occlusion, sample count,
+parallax, subsurface switches and the like) are kept; the others are listed as dropped. For
+older targets the shader starts with its defaults. Only the 12.0 result has been opened in
+Painter (12.0.1), which finds the shader by name even with another release's version hash
+in the URL, or none.
 
 A layer type that did not exist yet in the target release cannot be converted; Painter
 will refuse such a project.
+
+## Substance engine crash (Painter 12.0.1)
+
+Painter 12.0.1 on Linux crashes with some materials, converted or not: Fabric Felt is one,
+and student projects using such materials crash on open or when the layer is selected
+(SIGSEGV on a "SubstanceThread" in `libsubstance_sse2_blend.so`). Painter computes the
+layers on the GPU, but renders a material's preview in the fill properties with its CPU
+Substance engine, and functions in that engine keep 16-byte values on the stack 8 bytes off
+alignment, so their aligned SSE loads (`movaps`) fault. Adobe has confirmed the bug
+([report](https://community.adobe.com/bug-reports-58/sigsegv-in-libsubstance-sse2-blend-so-caused-by-stack-misalignment-on-material-apply-1554909)).
+
+The launcher preloads `painter/substance_engine_fix.c`, which rewrites the 4309
+stack-relative `movaps` of that library as `movups` (same length, no alignment requirement)
+in memory when Painter starts. The file on disk is not touched. It acts only on the 12.0.1
+build: the library's size and the expected opcode at every site must match, otherwise
+nothing is changed. `dev/gen_substance_engine_fix.py` produces the site list for another
+build. Needs a C compiler at install time; set `PAINTER_SUBSTANCE_FIX=0` in
+`~/.config/substance-painter.conf` to turn it off. It applies on X11 and Wayland alike.
 
 ## Desktop fixes (Wayland: niri, KDE Plasma, wlroots)
 
@@ -275,7 +301,8 @@ transfer, the optional update check against github.com, is described in the
 | `install.sh` | (re)installs the CLI, launcher, menu entry and `.spp` association |
 | `painter/startup/keyboard_nav.py` | keyboard-navigation plugin, loaded by the launcher |
 | `painter/screengrab_shim.cpp`, `painter/painter-screengrab`, `painter/kwin_screengrab.cpp` | eyedropper fix (preloaded library, its screenshot helper, and the KWin screenshot program the helper uses on KDE) |
-| `dev/` | the scripts that produced `schemas.py` by probing a real Painter |
+| `painter/substance_engine_fix.c`, `painter/substance_engine_fix_12.0.1.h` | fix for the 12.0.1 Substance engine crash (preloaded library and its generated site list) |
+| `dev/` | the scripts that produced `schemas.py` by probing a real Painter, and `gen_substance_engine_fix.py` |
 
 ## License
 

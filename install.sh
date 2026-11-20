@@ -6,7 +6,8 @@
 #                            (PAINTER_VERSION below) are converted automatically
 #   * an app-launcher entry, the Painter icon and the .spp file association
 #   * desktop fixes applied by the launcher (see painter/): UI scale, a working
-#     eyedropper under XWayland, and the keyboard-navigation plugin
+#     eyedropper under XWayland, the keyboard-navigation plugin, and a fix for the
+#     12.0.1 Substance engine crash on some materials (substance_engine_fix.c)
 # Re-run any time (e.g. after moving Painter: PAINTER_DIR=/new/path ./install.sh).
 set -euo pipefail
 
@@ -19,6 +20,7 @@ DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 BIN="$HOME/.local/bin"
 VENV="$DATA/spp-downgrade/venv"
 SHIM="$DATA/spp-downgrade/libpainter-screengrab.so"
+SBS_FIX="$DATA/spp-downgrade/libpainter-substance-fix.so"
 KWIN_GRAB="$DATA/spp-downgrade/painter-kwin-screengrab"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/substance-painter.conf"
 APP_ID="adobe-substance-3d-painter"
@@ -52,6 +54,14 @@ else
     echo "  skipped: needs g++ and the Qt 6 headers (Fedora: sudo dnf install gcc-c++ qt6-qtbase-devel)"
 fi
 
+echo "* Substance engine fix ($SBS_FIX)"
+if command -v cc >/dev/null; then
+    cc -shared -fPIC -O2 -o "$SBS_FIX" "$HERE/painter/substance_engine_fix.c"
+else
+    rm -f "$SBS_FIX"
+    echo "  skipped: needs a C compiler (Fedora: sudo dnf install gcc)"
+fi
+
 # KDE Plasma: the screenshot comes from KWin, which only serves programs that a
 # .desktop file authorises for its screenshot interface.
 rm -f "$KWIN_GRAB" "$DATA/applications/painter-kwin-screengrab.desktop"
@@ -81,6 +91,17 @@ if [ ! -e "$CONF" ]; then
 
 # Set to 0 to turn off the eyedropper (screen colour picker) fix.
 #PAINTER_EYEDROPPER_FIX=1
+
+# Set to 0 to turn off the fix for Painter 12.0.1's Substance engine crash
+# (some materials, e.g. Fabric Felt, crash Painter when their properties show).
+#PAINTER_SUBSTANCE_FIX=1
+CONF_EOF
+elif ! grep -q PAINTER_SUBSTANCE_FIX "$CONF"; then
+    cat >> "$CONF" <<'CONF_EOF'
+
+# Set to 0 to turn off the fix for Painter 12.0.1's Substance engine crash
+# (some materials, e.g. Fabric Felt, crash Painter when their properties show).
+#PAINTER_SUBSTANCE_FIX=1
 CONF_EOF
 fi
 
@@ -137,6 +158,12 @@ if [[ -n "\${WAYLAND_DISPLAY:-}" && -f "$SHIM" && "\${PAINTER_EYEDROPPER_FIX:-1}
     export PAINTER_SCREENGRAB_HELPER="$HERE/painter/painter-screengrab"
     export PAINTER_KWIN_SCREENGRAB="$KWIN_GRAB"
     export LD_PRELOAD="$SHIM\${LD_PRELOAD:+:\$LD_PRELOAD}"
+fi
+
+# Substance engine: Painter 12.0.1's CPU engine crashes on misaligned stack slots when it
+# renders some materials; the preloaded fix makes those moves unaligned (in memory only).
+if [[ -f "$SBS_FIX" && "\${PAINTER_SUBSTANCE_FIX:-1}" != 0 ]]; then
+    export LD_PRELOAD="$SBS_FIX\${LD_PRELOAD:+:\$LD_PRELOAD}"
 fi
 
 cd "\$PAINTER_DIR" || exit 1
