@@ -52,6 +52,13 @@ REMOVED_FROM = ('DataActionClone', 'DataActionEraser', 'DataActionPaint', 'DataA
                 'DataActionSmudge')
 REMOVED_SEEN = ('DataActionEraser', 'DataActionPaint')
 CURRENT_NAMES = {old_name: cur for cur, (old_name, _) in OLD_NAMES.items()}
+# Classes no 12.0 project shows, whose layout in BASE is the one seen in an older data
+# version: {class: that version}.  DataStroke3D (3D path strokes): 11.1 projects (88) have
+# no sticky fields, 12.1 (91) adds stickyBackupPoints / stickyState, and Painter 12.0.1
+# rejects a document with DataStroke3D.stickyState ("A value has been defined for a
+# NON-EXISTING member ... stickyState").  A 12.2 project with paths, converted with the
+# 11.1 layout, opens in 12.0.1.
+BASE_FROM_OLDER = {'DataStroke3D': 88}
 
 
 def removed_fields():
@@ -147,7 +154,7 @@ def main():
             for c, lay in doc[n].items():
                 if c in doc_base:
                     continue
-                if later[c] != {tuple(lay)}:
+                if later[c] != {tuple(lay)} and BASE_FROM_OLDER.get(c) != n:
                     if older_seen.setdefault(n, {}).setdefault(c, lay) != lay:
                         sys.exit(f'version {n}: layout of {c} differs from the one in schemas.py')
                     continue

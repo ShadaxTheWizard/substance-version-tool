@@ -146,7 +146,7 @@ project actually used. The older the target, the longer that list can get:
 | not available before | what is dropped |
 |---|---|
 | 12.2 | polygon-fill blending / opacity / rectangle paint-through (fills become plain colour) |
-| 12.1 | texture-set shader model, channel description, background colour and colour-profile overrides |
+| 12.1 | texture-set shader model, channel description, background colour and colour-profile overrides, sticky path points |
 | 12.0 | warp-projection sticky points |
 | 11.1 | fill-layer symmetry, layer-stack type |
 | 11.0 | resolution override of procedural / text / vector sources |
@@ -161,9 +161,9 @@ cannot be converted are left as saved and Painter falls back to its defaults for
 for 10.x and older they are left out, because those releases cannot decode the newer
 encoding at all.
 
-Two gaps for 9.x / 10.x: 3D path strokes (paths) are kept in today's layout, which those
-releases may reject (the tool warns when a project has any), and resources such as export
-presets stay in the newer format (also with a warning).
+Two gaps for 9.x / 10.x: 3D path strokes (paths) are written in the 11.1 layout, which no
+project of those releases has confirmed (the tool warns when a project has any), and
+resources such as export presets stay in the newer format (also with a warning).
 
 A project carries the source of its shader, which the older Painter compiles against its
 own shader library. For targets before 12.1 the tool renames the one library function that

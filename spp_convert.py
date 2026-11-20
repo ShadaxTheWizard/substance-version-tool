@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sppformat as sf                                   # noqa: E402
 import schemas                                           # noqa: E402
 
-__version__ = '0.6.2'
+__version__ = '0.6.3'
 
 # ---------------------------------------------------------------------------
 # Painter releases and what each one reads
@@ -44,6 +44,7 @@ DEFAULT_TARGET = '12.0.1'
 NEWEST_DATA_VERSION = 92                       # 12.2
 WIDE_MASK_VERSION = 91                         # 12.1: first known with 128-bit channel masks
 OLDEST_DATA_VERSION = schemas.DOC_MIN_VERSION  # oldest layout this tool can write
+PATH_LAYOUT_SEEN = 88                           # 11.1: oldest with a known 3D path stroke layout
 
 
 class Profile:
@@ -174,6 +175,9 @@ DROPPED_DESCRIPTIONS = {
     'DataLayerGroup.explicitPersistentCachePin': 'layer cache pin',
     'DataActionFill.uvTransferChannel': 'fill layer UV transfer channel',
     'DataStroke.label': 'stroke / path names',
+    'DataStroke3D.label': 'stroke / path names',
+    'DataStroke3D.stickyBackupPoints': 'sticky path points',
+    'DataStroke3D.stickyState': 'sticky path points',
     'DataActionPaint.strokes3D': '3D path strokes',
     'DataActionPaintProj.strokes3D': '3D path strokes',
     'DataActionEraser.strokes3D': '3D path strokes',
@@ -356,6 +360,10 @@ class DataConverter:
         name = schemas.current_name(klass.name)
         src_types = dict(klass.fields)
         dst_fields = self.layouts.get(name)
+        if name == 'DataStroke3D' and self.report.target.profile.doc < PATH_LAYOUT_SEEN:
+            self.report.warn(f'3D path strokes are written in the Painter 11.1 layout, which no '
+                             f'project of Painter {self.report.target.name} has confirmed; it may '
+                             f'reject them')
         if dst_fields is None:
             if self.strict:
                 raise Unconvertible(f'class {name} is not in the target layout')
